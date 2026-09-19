@@ -75,6 +75,26 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
         keyHelper.sendHome()
     }
 
+    /// Mouse side buttons: 3 is back, 4 is forward. iOS has no back key, so
+    /// both drive the interactive edge-swipe gesture the system already owns.
+    override func otherMouseDown(with event: NSEvent) {
+        let w = Double(bounds.width)
+        let h = Double(bounds.height)
+        guard w > 0, h > 0 else { return }
+        // Start inside hitTestEdge's 32pt band so the touch carries a left or
+        // right swipeAim; without it the guest reads a plain drag.
+        switch event.buttonNumber {
+        case 3:
+            injectSwipe(fromX: 2, fromY: h / 2, toX: w * 0.6, toY: h / 2,
+                        screenWidth: Int(w), screenHeight: Int(h), durationMs: 180)
+        case 4:
+            injectSwipe(fromX: w - 2, fromY: h / 2, toX: w * 0.4, toY: h / 2,
+                        screenWidth: Int(w), screenHeight: Int(h), durationMs: 180)
+        default:
+            super.otherMouseDown(with: event)
+        }
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.contains(.command),
            event.charactersIgnoringModifiers == "h"
