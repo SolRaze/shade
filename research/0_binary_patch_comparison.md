@@ -623,6 +623,72 @@ detects the existing child by name and skips. The DT IM4P that ships
 on subsequent boots is signed by Apple but the existing iBSS/iBEC/LLB
 `image4_validate_property_callback` bypass accepts arbitrary payloads.
 
+### DeviceTree `/product` Siri capability flags (offline, any installed VM)
+
+`scripts/patchers/cfw_patch_siri_dt.py` flips the Siri-family capability
+properties under `device-tree/product` from the 12-byte `'syscfg/XXXX'`
+cstring placeholders vphone600 ships to uint32 `1`. On real hardware those
+placeholders resolve through syscfg; the VM has no syscfg, so
+`libMobileGestalt` answers NO and iOS reports Siri as unavailable. CarPlay
+refuses to start a session without Siri, so a VM cannot be a CarPlay source.
+
+| Property | Placeholder (12 bytes) | New value |
+|----------|------------------------|-----------|
+| `/product::assistant`         | `syscfg/assi` | uint32 1 (`01000000`) |
+| `/product::dictation`         | `syscfg/dict` | uint32 1 |
+| `/product::offline-dictation` | `syscfg/odct` | uint32 1 |
+| `/product::siri-gesture`      | `syscfg/sige` | uint32 1 |
+| `/product::carplay-2`         | `syscfg/car2` | uint32 1 |
+
+Values verified against `Firmware/all_flash/DeviceTree.d47ap.im4p` of
+`iPhone17,3_26.1_23B85_Restore.ipsw`.
+
+Only the Siri family is touched. Rewriting `/product` wholesale breaks screen
+rendering on the VM (see the Tier B/C/F note above) — the display pipeline
+reads capability properties during init and picks a path the VM cannot
+service. Display was re-verified intact after this patch.
+
+Each property shrinks 12 -> 4 bytes, so the DT blob changes size. That is why
+this patcher does its own IM4P/IMG4 unwrap and repack instead of reusing
+`cfw_patch_post_restore_dt.patch_devicetree_file`, which hard-fails on any DT
+size change ("DT size changed: ... (would break IM4P offsets)"). Node parsing
+and serialization are imported from that module. The original IM4M ticket is
+preserved; the iBSS/iBEC/LLB `image4_validate_property_callback` bypass
+accepts the resized payload at next boot.
+
+Applied offline to an installed VM with the VM shut down:
+
+```
+./scripts/vm_patch_display.sh ~/.vphone/VMs/<vm> --siri      # enable
+./scripts/vm_patch_display.sh ~/.vphone/VMs/<vm> --no-siri   # placeholders back
+.venv/bin/python3 scripts/patchers/cfw_patch_siri_dt.py <img4> --dry-run
+```
+
+`devicetree.img4.orig` beside the patched file is the revert. Idempotent in
+both directions: an already-patched property is skipped.
+
+**Known incomplete.** The DT side is verified — a re-parse of the patched
+img4 reads `01000000` for every property — but no "Apple Intelligence & Siri"
+row appears in Settings after the patch. Siri is not stripped from the
+firmware (the System volume carries `AssistantSettings.bundle`,
+`SiriMessagesSettings.bundle`, `com.apple.assistantd.plist`,
+`com.apple.assistant_service.plist`, `com.apple.siriknowledged.plist`), so the
+remaining block is the cached MobileGestalt answer at
+`/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache/Library/Caches/com.apple.MobileGestalt.plist`.
+That path is on the encrypted Data volume, which cannot be mounted offline
+(`mount_apfs: volume could not be mounted: Illegal byte sequence`), so the
+cache can only be cleared from inside the running guest — Connect > File
+Browser, delete the plist, reboot.
+
+Clearing the cache did not help. The plist was deleted from the running guest
+and the VM rebooted; Settings still shows `General / Accessibility / Camera /
+Control Center / ...` with no "Apple Intelligence & Siri" row between
+Accessibility and Camera, and `prefs:root=SIRI` opens Settings at its root
+instead of a Siri pane, so the pane is not registered at all. The DT flags and
+the gestalt cache are therefore both ruled out; the remaining suspect is the
+Settings pane visibility gate itself (the iOS 26 row is the merged Apple
+Intelligence pane, which is gated on more than the `assistant` capability).
+
 ### Post-restore DT identity rewrite (EXP-JB-6, EXP only)
 
 After the restore daemon's BuildManifest identity check has passed,

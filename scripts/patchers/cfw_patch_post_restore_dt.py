@@ -163,8 +163,16 @@ def _encode_fixed_string(s: str, length: int) -> bytes:
 # ──────────────────────────────────────────────────────────────────────
 
 
-def _patch_dt_blob(dt_blob: bytes) -> bytes:
+def _patch_dt_blob(
+    dt_blob: bytes, model: str = "iPhone17,3", target: str = "D47"
+) -> bytes:
     """Apply the post-restore DT identity rewrites. Returns the new blob.
+
+    `model` / `target` pick the identity userland sees. The default pair is
+    the one the exp install uses. A pair whose artwork has no Dynamic Island
+    (iPhone14,5 / D17 — iPhone 13, notch) makes SpringBoard draw a notch
+    instead of the island; the display properties in cfw_patch_display_dt.py
+    only decide artwork while the identity stays VPHONE600 / iPhone99,11.
 
     Raises if the DT structure doesn't match what we expect.
     """
@@ -179,29 +187,33 @@ def _patch_dt_blob(dt_blob: bytes) -> bytes:
 
     changed = []
 
-    # 1. root/model → iPhone17,3
+    # 1. root/model
     p = _find_property(root, "model")
-    new_val = _encode_fixed_string("iPhone17,3", p.length)
+    new_val = _encode_fixed_string(model, p.length)
     if p.value != new_val:
         before = p.value.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
         p.value = new_val
-        changed.append(f"model: '{before}' -> 'iPhone17,3'")
+        changed.append(f"model: '{before}' -> '{model}'")
 
-    # 2. root/target-type → D47
+    # 2. root/target-type
     p = _find_property(root, "target-type")
-    new_val = _encode_fixed_string("D47", p.length)
+    new_val = _encode_fixed_string(target, p.length)
     if p.value != new_val:
         before = p.value.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
         p.value = new_val
-        changed.append(f"target-type: '{before}' -> 'D47'")
+        changed.append(f"target-type: '{before}' -> '{target}'")
 
     # 3. root/compatible reorder
     p = _find_property(root, "compatible")
-    new_compat_body = (
-        b"D47AP\x00"
-        + b"VPHONE600AP\x00"
-        + b"AppleVirtualPlatformARM\x00"
-    )
+    # VPHONE600AP stays in the list so IOKit still binds AppleVMApple1IO.
+    # Reverting the identity to VPHONE600 collapses the two into one entry —
+    # a repeated compatible string makes the platform expert match twice.
+    parts = [target.encode() + b"AP", b"VPHONE600AP", b"AppleVirtualPlatformARM"]
+    seen: list[bytes] = []
+    for part in parts:
+        if part not in seen:
+            seen.append(part)
+    new_compat_body = b"".join(part + b"\x00" for part in seen)
     if len(new_compat_body) > p.length:
         raise ValueError(
             f"compatible body {len(new_compat_body)}B > slot {p.length}B"
@@ -214,10 +226,8 @@ def _patch_dt_blob(dt_blob: bytes) -> bytes:
             if x
         ]
         p.value = new_compat
-        changed.append(
-            f"compatible: {before_parts} -> ['D47AP', 'VPHONE600AP', "
-            f"'AppleVirtualPlatformARM']"
-        )
+        after_parts = [x.decode() for x in seen]
+        changed.append(f"compatible: {before_parts} -> {after_parts}")
 
     if not changed:
         return dt_blob
@@ -232,7 +242,13 @@ def _patch_dt_blob(dt_blob: bytes) -> bytes:
 # ──────────────────────────────────────────────────────────────────────
 
 
-def patch_devicetree_file(path: str, *, dry_run: bool = False) -> int:
+def patch_devicetree_file(
+    path: str,
+    *,
+    dry_run: bool = False,
+    model: str = "iPhone17,3",
+    target: str = "D47",
+) -> int:
     """Patch a devicetree.img4 (preferred) or devicetree.im4p file in
     place. Returns the number of property changes applied (0 if the file
     was already in the target state).
@@ -267,7 +283,7 @@ def patch_devicetree_file(path: str, *, dry_run: bool = False) -> int:
     print(f"  [.] DT blob: {len(dt_blob)} bytes")
 
     # Apply patches
-    new_dt = _patch_dt_blob(dt_blob)
+    new_dt = _patch_dt_blob(dt_blob, model=model, target=target)
     if new_dt == dt_blob:
         print(f"  [.] {path}: DT already in target state — no change")
         return 0
@@ -309,14 +325,20 @@ def patch_devicetree_file(path: str, *, dry_run: bool = False) -> int:
 def _main(argv):
     if len(argv) < 2:
         print(
-            "Usage: cfw_patch_post_restore_dt.py <devicetree.img4|im4p> [--dry-run]",
+            "Usage: cfw_patch_post_restore_dt.py <devicetree.img4|im4p> "
+            "[--model iPhone17,3] [--target D47] [--dry-run]",
             file=sys.stderr,
         )
         return 2
     path = argv[1]
-    dry_run = "--dry-run" in argv[2:]
+    rest = argv[2:]
+    dry_run = "--dry-run" in rest
+    opts = {}
+    for flag, key in (("--model", "model"), ("--target", "target")):
+        if flag in rest:
+            opts[key] = rest[rest.index(flag) + 1]
     try:
-        patch_devicetree_file(path, dry_run=dry_run)
+        patch_devicetree_file(path, dry_run=dry_run, **opts)
     except Exception as e:
         print(f"[-] {type(e).__name__}: {e}", file=sys.stderr)
         return 1
