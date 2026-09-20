@@ -29,8 +29,8 @@ BUILD_INFO  := sources/vphone-cli/VPhoneBuildInfo.swift
 SCRIPTS     := scripts
 BINARY      := .build/release/vphone-cli
 PATCHER_BINARY := .build/debug/vphone-cli
-BUNDLE      := .build/vphone-cli.app
-BUNDLE_BIN  := $(BUNDLE)/Contents/MacOS/vphone-cli
+BUNDLE      := .build/v-deuce.app
+BUNDLE_BIN  := $(BUNDLE)/Contents/MacOS/v-deuce
 INFO_PLIST  := sources/Info.plist
 ENTITLEMENTS := sources/vphone.entitlements
 VENV        := .venv
@@ -230,6 +230,7 @@ bundle: build $(INFO_PLIST)
 	@cp -f $(INFO_PLIST) $(BUNDLE)/Contents/Info.plist
 	@cp -f sources/AppIcon.icns $(BUNDLE)/Contents/Resources/AppIcon.icns
 	@cp -f $(SCRIPTS)/vphoned/signcert.p12 $(BUNDLE)/Contents/Resources/signcert.p12
+	@rsync -a --exclude=__pycache__ $(SCRIPTS)/ $(BUNDLE)/Contents/Resources/scripts/
 	@cp -f $$(command -v ldid) $(BUNDLE)/Contents/MacOS/ldid
 	@codesign --force --sign - $(BUNDLE)/Contents/MacOS/ldid
 	@codesign --force --sign - --entitlements $(ENTITLEMENTS) $(BUNDLE_BIN)

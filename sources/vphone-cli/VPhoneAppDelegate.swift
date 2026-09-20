@@ -108,7 +108,8 @@ class VPhoneAppDelegate: NSObject, NSApplicationDelegate {
                 screenScale: options.screenScale,
                 keyHelper: keyHelper,
                 control: control,
-                ecid: vm.ecidHex
+                ecid: vm.ecidHex,
+                name: options.configURL.deletingLastPathComponent().lastPathComponent
             )
             windowController = wc
 
@@ -124,6 +125,7 @@ class VPhoneAppDelegate: NSObject, NSApplicationDelegate {
             let mc = VPhoneMenuController(keyHelper: keyHelper, control: control)
             mc.vm = vm
             mc.captureView = wc.captureView
+            mc.windowController = wc
             mc.touchIDMonitor = wc.touchIDMonitor
             mc.onFilesPressed = { [weak fileWC, weak control] in
                 guard let fileWC, let control else { return }

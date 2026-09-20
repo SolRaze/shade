@@ -54,6 +54,7 @@ class VPhoneControl {
     private var guestBinaryData: Data?
     private var guestBinaryHash: String?
     private var nextRequestId: UInt64 = 0
+    private var cachedFilesAppRoot: String?
     private var connectionAttemptToken: UInt64 = 0
     private var reconnectWorkItem: DispatchWorkItem?
     public var variant: VPhoneVirtualMachine.Variant = .regular
@@ -437,6 +438,26 @@ class VPhoneControl {
                 return
             }
         }
+    }
+
+    /// "On My iPhone" in the Files app is the LocalStorage file provider's group
+    /// container. Its UUID differs per install, so the container is found by
+    /// reading each group's metadata once and cached for the session.
+    func filesAppStorageRoot() async throws -> String {
+        if let cachedFilesAppRoot { return cachedFilesAppRoot }
+        let base = "/var/mobile/Containers/Shared/AppGroup"
+        for entry in try await listFiles(path: base) {
+            guard let name = entry["name"] as? String else { continue }
+            let metadata = "\(base)/\(name)/.com.apple.mobile_container_manager.metadata.plist"
+            guard let data = try? await downloadFile(path: metadata),
+                  let text = String(data: data, encoding: .isoLatin1),
+                  text.contains("group.com.apple.FileProvider.LocalStorage")
+            else { continue }
+            let root = "\(base)/\(name)/File Provider Storage"
+            cachedFilesAppRoot = root
+            return root
+        }
+        throw ControlError.guestError("Files app storage not found on the guest")
     }
 
     func createDirectory(path: String) async throws {

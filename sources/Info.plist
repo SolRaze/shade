@@ -5,9 +5,11 @@
 	<key>CFBundleIdentifier</key>
 	<string>com.vphone.cli</string>
 	<key>CFBundleExecutable</key>
-	<string>vphone-cli</string>
+	<string>v-deuce</string>
 	<key>CFBundleName</key>
-	<string>vphone-cli</string>
+	<string>v-deuce</string>
+	<key>CFBundleDisplayName</key>
+	<string>v-deuce</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleVersion</key>
@@ -15,7 +17,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>LSUIElement</key>
-	<true/>
+	<false/>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>NSLocationUsageDescription</key>

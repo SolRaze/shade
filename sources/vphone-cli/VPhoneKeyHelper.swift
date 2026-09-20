@@ -89,6 +89,25 @@ class VPhoneKeyHelper {
         control.sendHIDUp(page: 0x07, usage: 0xE3) // Cmd up
     }
 
+    /// Double home press, which is what iOS binds the app switcher to on a
+    /// Face ID device with no hardware home button.
+    func sendAppSwitcher() {
+        guard requireConnection() else { return }
+        control.sendHIDPress(page: 0x0C, usage: 0x40)
+        control.sendHIDPress(page: 0x0C, usage: 0x40)
+    }
+
+    // MARK: - Raw Key Events
+
+    /// Send one key transition straight to the guest keyboard. keyCode is an
+    /// Apple virtual key code, the same space NSEvent.keyCode uses.
+    func sendRawKey(keyCode: UInt16, down: Bool) {
+        guard let keyboard = firstKeyboard,
+              let obj = Dynamic._VZKeyEvent(type: down ? 0 : 1, keyCode: keyCode).asAnyObject
+        else { return }
+        Dynamic(keyboard).sendKeyEvents([obj] as NSArray)
+    }
+
     // MARK: - Type ASCII from Clipboard
 
     func typeFromClipboard() {

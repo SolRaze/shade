@@ -66,6 +66,7 @@ extension VPhoneMenuController {
         refreshCameraSourceCheckmarks()
         cameraStartStopItem?.isEnabled = false
         cameraStartStopItem?.title = "Start Streaming"
+        cameraStartStopItem?.image = VPhoneMenuController.symbol(for: "Start Streaming")
     }
 
     @objc func setCameraSourceTestPattern() {
@@ -103,9 +104,11 @@ extension VPhoneMenuController {
         if cameraStartStopItem?.title == "Start Streaming" {
             server.startStreaming()
             cameraStartStopItem?.title = "Stop Streaming"
+            cameraStartStopItem?.image = VPhoneMenuController.symbol(for: "Stop Streaming")
         } else {
             server.stopStreaming()
             cameraStartStopItem?.title = "Start Streaming"
+            cameraStartStopItem?.image = VPhoneMenuController.symbol(for: "Start Streaming")
         }
     }
 }

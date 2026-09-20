@@ -8,6 +8,9 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
     weak var control: VPhoneControl?
 
     private var currentTouchSwipeAim: Int = 0
+    private var heldModifiers: Set<UInt16> = []
+    /// Left and right Shift, Control, Option, Command, plus Caps Lock and Fn.
+    private static let modifierKeyCodes: Set<UInt16> = [0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F]
     private var isDragHighlightVisible = false
 
     // MARK: - Private API Accessors
@@ -102,13 +105,86 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
             keyHelper?.sendHome()
             return true
         }
+        // Cmd+Shift+V pastes the host pasteboard by typing it, so plain Cmd+V
+        // stays available as the guest's own paste.
+        if event.modifierFlags.contains(.command),
+           event.modifierFlags.contains(.shift),
+           event.charactersIgnoringModifiers?.lowercased() == "v"
+        {
+            keyHelper?.typeFromClipboard()
+            return true
+        }
+        // AppKit routes Cmd chords here instead of keyDown, so the guest would
+        // never get Cmd+C, Cmd+V or Cmd+A without this.
+        if event.modifierFlags.contains(.command), let keyHelper, window?.firstResponder === self {
+            keyHelper.sendRawKey(keyCode: event.keyCode, down: true)
+            keyHelper.sendRawKey(keyCode: event.keyCode, down: false)
+            return true
+        }
         return super.performKeyEquivalent(with: event)
+    }
+
+    /// The whole keyboard is forwarded as raw Apple virtual key codes, which is
+    /// the only way the guest sees modifier state: the base class translates
+    /// characters and drops Shift, Cmd, Ctrl and Option, so uppercase and the
+    /// guest's own Cmd+C/Cmd+V never arrive.
+    override func keyDown(with event: NSEvent) {
+        guard let keyHelper else {
+            super.keyDown(with: event)
+            return
+        }
+        // Holding a key gives repeated keyDowns with no keyUp between them. The
+        // guest counts transitions, so a second down on an already-down key is
+        // dropped and the hold produces one character. Each repeat is sent as a
+        // fresh release-press pair, which puts the guest on the host's own
+        // repeat rate.
+        if event.isARepeat {
+            keyHelper.sendRawKey(keyCode: event.keyCode, down: false)
+        }
+        keyHelper.sendRawKey(keyCode: event.keyCode, down: true)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        guard let keyHelper else {
+            super.keyUp(with: event)
+            return
+        }
+        keyHelper.sendRawKey(keyCode: event.keyCode, down: false)
+    }
+
+    /// Forward each physical modifier key as its own down/up pair.
+    override func flagsChanged(with event: NSEvent) {
+        let code = event.keyCode
+        guard Self.modifierKeyCodes.contains(code) else {
+            super.flagsChanged(with: event)
+            return
+        }
+        if heldModifiers.remove(code) != nil {
+            keyHelper?.sendRawKey(keyCode: code, down: false)
+        } else {
+            heldModifiers.insert(code)
+            keyHelper?.sendRawKey(keyCode: code, down: true)
+        }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        releaseHeldModifiers()
+        return super.resignFirstResponder()
+    }
+
+    /// Nothing else releases a modifier the guest still thinks is down once the
+    /// window loses focus mid-chord.
+    func releaseHeldModifiers() {
+        for code in heldModifiers {
+            keyHelper?.sendRawKey(keyCode: code, down: false)
+        }
+        heldModifiers.removeAll()
     }
 
     // MARK: - Drag and Drop Install
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        guard droppedInstallPackageURL(from: sender) != nil else { return [] }
+        guard !droppedFileURLs(from: sender).isEmpty else { return [] }
         updateDragHighlight(true)
         return .copy
     }
@@ -119,12 +195,18 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
     }
 
     override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        droppedInstallPackageURL(from: sender) != nil
+        !droppedFileURLs(from: sender).isEmpty
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         updateDragHighlight(false)
-        guard let url = droppedInstallPackageURL(from: sender) else { return false }
+        let urls = droppedFileURLs(from: sender)
+        guard !urls.isEmpty else { return false }
+
+        let documents = urls.filter { !VPhoneInstallPackage.isSupportedFile($0) }
+        if !documents.isEmpty { copyIntoFilesApp(documents) }
+
+        guard let url = urls.first(where: VPhoneInstallPackage.isSupportedFile) else { return true }
 
         Task { @MainActor in
             guard let control else {
@@ -154,14 +236,42 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
         return true
     }
 
-    private func droppedInstallPackageURL(from sender: any NSDraggingInfo) -> URL? {
+    private func droppedFileURLs(from sender: any NSDraggingInfo) -> [URL] {
         let options: [NSPasteboard.ReadingOptionKey: Any] = [
             .urlReadingFileURLsOnly: true,
         ]
-        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL] else {
-            return nil
+        let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL]
+        return urls ?? []
+    }
+
+    /// Anything that is not an installable package lands in the guest's Files
+    /// app, under On My iPhone. Written 666 because vphoned runs as root and
+    /// the Files app reads and deletes as mobile.
+    private func copyIntoFilesApp(_ urls: [URL]) {
+        Task { @MainActor in
+            guard let control, control.isConnected else {
+                showAlert(title: "Copy to Files", message: "Guest is not connected.", style: .warning)
+                return
+            }
+            do {
+                let root = try await control.filesAppStorageRoot()
+                for url in urls {
+                    let data = try Data(contentsOf: url)
+                    let remote = "\(root)/\(url.lastPathComponent)"
+                    try await control.uploadFile(path: remote, data: data, permissions: "666")
+                    print("[files] copied \(url.lastPathComponent) to \(remote)")
+                }
+                showAlert(
+                    title: "Copy to Files",
+                    message: urls.count == 1
+                        ? "\(urls[0].lastPathComponent) is in Files under On My iPhone."
+                        : "\(urls.count) files are in Files under On My iPhone.",
+                    style: .informational
+                )
+            } catch {
+                showAlert(title: "Copy to Files", message: "\(error)", style: .warning)
+            }
         }
-        return urls.first(where: VPhoneInstallPackage.isSupportedFile)
     }
 
     private func updateDragHighlight(_ visible: Bool) {

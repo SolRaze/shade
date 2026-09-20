@@ -21,6 +21,7 @@ extension VPhoneMenuController {
             Task { @MainActor in
                 let url = await screenRecorder?.stopRecording()
                 recordingItem?.title = "Start Recording"
+                recordingItem?.image = VPhoneMenuController.symbol(for: "Start Recording")
                 if let url {
                     showRecordingSavedAlert(url: url)
                 }
@@ -33,6 +34,7 @@ extension VPhoneMenuController {
             do {
                 try screenRecorder?.startRecording(view: view)
                 recordingItem?.title = "Stop Recording"
+                recordingItem?.image = VPhoneMenuController.symbol(for: "Stop Recording")
             } catch {
                 showAlert(title: "Recording", message: "\(error)", style: .warning)
             }

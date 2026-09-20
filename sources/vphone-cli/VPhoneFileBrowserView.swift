@@ -16,7 +16,13 @@ struct VPhoneFileBrowserView: View {
                 .padding(.bottom, controlBarHeight)
                 .overlay(controlBar.frame(maxHeight: .infinity, alignment: .bottom))
                 .opacity(model.isTransferring ? 0.25 : 1)
-                .searchable(text: $model.searchText, prompt: "Filter files")
+                .searchable(text: $model.searchText, prompt: "Filter files or /abs/path")
+                .onSubmit(of: .search) {
+                    // Absolute path in the filter field jumps there instead of filtering.
+                    guard model.searchText.hasPrefix("/") else { return }
+                    model.navigate(to: model.searchText)
+                    model.searchText = ""
+                }
                 .onDrop(of: [.fileURL], isTargeted: nil, perform: dropFiles)
                 .disabled(model.isTransferring)
                 .toolbar { toolbarContent }

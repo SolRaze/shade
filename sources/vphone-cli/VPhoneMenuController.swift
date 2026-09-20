@@ -4,7 +4,7 @@ import Foundation
 // MARK: - Menu Controller
 
 @MainActor
-class VPhoneMenuController {
+class VPhoneMenuController: NSObject {
     let keyHelper: VPhoneKeyHelper
     let control: VPhoneControl
     weak var vm: VPhoneVirtualMachine?
@@ -42,6 +42,9 @@ class VPhoneMenuController {
     var cameraSourceVideoFileItem: NSMenuItem?
     var cameraStartStopItem: NSMenuItem?
     weak var captureView: VPhoneVirtualMachineView?
+    weak var windowController: VPhoneWindowController?
+    /// View-menu size items, keyed by the panel scale each one applies.
+    var viewSizeItems: [CGFloat: NSMenuItem] = [:]
     var batterySyncEnabled = false
     var batterySyncStatusItem: NSMenuItem?
     var batteryLevelMenuItems: [NSMenuItem] = []
@@ -53,6 +56,7 @@ class VPhoneMenuController {
     init(keyHelper: VPhoneKeyHelper, control: VPhoneControl) {
         self.keyHelper = keyHelper
         self.control = control
+        super.init()
         setupMenuBar()
     }
 
@@ -82,6 +86,7 @@ class VPhoneMenuController {
 
         mainMenu.addItem(buildConnectMenu())
         mainMenu.addItem(buildKeysMenu())
+        mainMenu.addItem(buildViewMenu())
         mainMenu.addItem(buildAppsMenu())
         mainMenu.addItem(buildRecordMenu())
 
@@ -104,6 +109,57 @@ class VPhoneMenuController {
     func makeItem(_ title: String, action: Selector) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
+        item.image = VPhoneMenuController.symbol(for: title)
         return item
+    }
+
+    /// SF Symbol per menu title. Items whose title changes at runtime carry
+    /// both titles here; setting the title again does not refresh the image, so
+    /// the code that flips a title sets `image` from this table too.
+    static let menuSymbols: [String: String] = [
+        "Home Screen": "iphone",
+        "App Switcher": "square.on.square",
+        "Spotlight": "magnifyingglass",
+        "Spotlight (Cmd+Space)": "magnifyingglass",
+        "Power": "power",
+        "Volume Up": "speaker.wave.3",
+        "Volume Down": "speaker.wave.1",
+        "Type ASCII from Clipboard": "keyboard",
+        "Touch ID Home Forwarding": "touchid",
+        "File Browser": "folder",
+        "Keychain Browser": "key",
+        "Developer Mode Status": "hammer",
+        "Ping": "wave.3.right",
+        "Guest Version": "info.circle",
+        "Get Clipboard": "doc.on.clipboard",
+        "Set Clipboard Text...": "clipboard",
+        "Read Setting...": "gearshape",
+        "Write Setting...": "gearshape.fill",
+        "App Browser": "square.grid.2x2",
+        "Open URL...": "safari",
+        "Install IPA/TIPA...": "arrow.down.app",
+        "Start Recording": "record.circle",
+        "Stop Recording": "stop.circle",
+        "Copy Screenshot to Clipboard": "camera.on.rectangle",
+        "Save Screenshot to File": "square.and.arrow.down",
+        "Sync Host Location": "location",
+        "Start Route Replay": "play.circle",
+        "Stop Route Replay": "stop.circle",
+        "Sync with Host": "arrow.triangle.2.circlepath",
+        "Charging": "battery.100.bolt",
+        "Disconnected": "battery.50",
+        "Source: Off": "video.slash",
+        "Source: Test Pattern": "square.grid.3x3",
+        "Source: Video File…": "film",
+        "Start Streaming": "video",
+        "Stop Streaming": "video.slash",
+        "Larger": "arrow.up.left.and.arrow.down.right",
+        "Actual Size": "rectangle",
+        "Smaller": "arrow.down.right.and.arrow.up.left",
+    ]
+
+    static func symbol(for title: String) -> NSImage? {
+        guard let name = menuSymbols[title] else { return nil }
+        return NSImage(systemSymbolName: name, accessibilityDescription: title)
     }
 }
