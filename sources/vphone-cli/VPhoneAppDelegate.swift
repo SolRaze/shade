@@ -170,7 +170,9 @@ class VPhoneAppDelegate: NSObject, NSApplicationDelegate {
             // Wire location toggle through onConnect/onDisconnect
             control.onConnect = { [weak mc, weak provider = locationProvider] caps in
                 mc?.updateConnectAvailability(available: true)
-                mc?.updateInstallAvailability(available: caps.contains("ipa_install"))
+                mc?.updateInstallAvailability(
+                    available: caps.contains("ipa_install"), liveContainer: caps.contains("lc_install")
+                )
                 mc?.updateAppsAvailability(available: caps.contains("apps"))
                 mc?.updateURLAvailability(available: caps.contains("url"))
                 mc?.updateClipboardAvailability(available: caps.contains("clipboard"))

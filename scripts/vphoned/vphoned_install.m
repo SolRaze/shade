@@ -854,3 +854,90 @@ NSDictionary *vp_handle_custom_install(NSDictionary *msg) {
         : [NSString stringWithFormat:@"Installed via built-in installer as User: %@", detail];
     return response;
 }
+
+// MARK: - LiveContainer Install
+
+static NSDictionary *vp_lc_error(id reqId, NSString *message) {
+    NSMutableDictionary *response = vp_make_response(@"err", reqId);
+    response[@"msg"] = message;
+    return response;
+}
+
+/// Unpacks the IPA's .app into LiveContainer's private Documents/Applications.
+/// LiveContainer patches and signs the bundle itself on first launch, so the
+/// bundle is only moved in place and handed to mobile. An existing bundle of the
+/// same name is replaced; its LCAppInfo.plist carries over so the app keeps its
+/// LiveContainer data folder.
+NSDictionary *vp_handle_lc_install(NSDictionary *msg) {
+    vp_load_private_frameworks();
+    id reqId = msg[@"id"];
+    NSString *ipaPath = msg[@"path"];
+    NSString *lcBundleID = [msg[@"bundle_id"] length] > 0 ? msg[@"bundle_id"] : @"com.kdt.livecontainer";
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    if (ipaPath.length == 0 || ![fm fileExistsAtPath:ipaPath]) {
+        return vp_lc_error(reqId, [NSString stringWithFormat:@"IPA not found: %@", ipaPath ?: @""]);
+    }
+
+    MCMContainer *container = [NSClassFromString(@"MCMAppDataContainer")
+        containerWithIdentifier:lcBundleID createIfNecessary:NO existed:nil error:nil];
+    NSString *containerPath = container.url.path;
+    if (containerPath.length == 0) {
+        [fm removeItemAtPath:ipaPath error:nil];
+        return vp_lc_error(reqId, [NSString stringWithFormat:@"%@ has no data container, is it installed and launched once?", lcBundleID]);
+    }
+    NSString *appsDir = [containerPath stringByAppendingPathComponent:@"Documents/Applications"];
+
+    NSString *tmpPath = [[NSTemporaryDirectory() stringByResolvingSymlinksInPath]
+        stringByAppendingPathComponent:[NSUUID UUID].UUIDString];
+    [fm createDirectoryAtPath:tmpPath withIntermediateDirectories:NO attributes:nil error:nil];
+
+    NSString *detail = nil;
+    NSString *failure = nil;
+    if (vp_extract_package_to_directory(ipaPath, tmpPath, &detail) != 0) {
+        failure = detail ?: @"extraction failed";
+    }
+
+    NSString *srcApp = failure ? nil : vp_find_app_path_in_bundle_path([tmpPath stringByAppendingPathComponent:@"Payload"]);
+    NSString *appId = vp_app_id_for_app_path(srcApp);
+    if (!failure && (srcApp.length == 0 || appId.length == 0)) {
+        failure = @"IPA does not contain an .app payload with a CFBundleIdentifier";
+    }
+
+    NSString *dstApp = [appsDir stringByAppendingPathComponent:srcApp.lastPathComponent];
+    BOOL replaced = NO;
+    if (!failure) {
+        [fm createDirectoryAtPath:appsDir withIntermediateDirectories:YES
+                       attributes:@{NSFileOwnerAccountID : @501, NSFileGroupOwnerAccountID : @501}
+                            error:nil];
+        NSString *oldInfo = [dstApp stringByAppendingPathComponent:@"LCAppInfo.plist"];
+        if ([fm fileExistsAtPath:oldInfo]) {
+            [fm copyItemAtPath:oldInfo toPath:[srcApp stringByAppendingPathComponent:@"LCAppInfo.plist"] error:nil];
+        }
+        if ([fm fileExistsAtPath:dstApp]) {
+            replaced = YES;
+            [fm removeItemAtPath:dstApp error:nil];
+        }
+        NSError *moveError = nil;
+        if (![fm moveItemAtPath:srcApp toPath:dstApp error:&moveError]) {
+            failure = [NSString stringWithFormat:@"move into %@ failed: %@", appsDir, moveError.localizedDescription];
+        }
+    }
+
+    if (!failure) {
+        lchown(dstApp.fileSystemRepresentation, 501, 501);
+        NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:dstApp];
+        for (NSString *relative in enumerator) {
+            lchown([dstApp stringByAppendingPathComponent:relative].fileSystemRepresentation, 501, 501);
+        }
+    }
+
+    [fm removeItemAtPath:tmpPath error:nil];
+    [fm removeItemAtPath:ipaPath error:nil];
+    if (failure) return vp_lc_error(reqId, vp_trimmed_output(failure));
+
+    NSMutableDictionary *response = vp_make_response(@"ok", reqId);
+    response[@"msg"] = [NSString stringWithFormat:@"%@ %@ (%@) in %@",
+        replaced ? @"Replaced" : @"Added", dstApp.lastPathComponent, appId, lcBundleID];
+    return response;
+}

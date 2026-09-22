@@ -28,6 +28,11 @@ extension VPhoneMenuController {
         installPackageItem = install
         menu.addItem(install)
 
+        let installLC = makeItem("Install IPA into LiveContainer...", action: #selector(installIPAIntoLiveContainer))
+        installLC.isEnabled = false
+        installLiveContainerItem = installLC
+        menu.addItem(installLC)
+
         item.submenu = menu
         return item
     }
@@ -40,8 +45,9 @@ extension VPhoneMenuController {
         appsOpenURLItem?.isEnabled = available
     }
 
-    func updateInstallAvailability(available: Bool) {
+    func updateInstallAvailability(available: Bool, liveContainer: Bool = false) {
         installPackageItem?.isEnabled = available
+        installLiveContainerItem?.isEnabled = liveContainer
     }
 
     @objc func openAppBrowser() {
@@ -49,22 +55,7 @@ extension VPhoneMenuController {
     }
 
     @objc func installIPAFromDisk() {
-        guard control.isConnected else {
-            showAlert(title: "Install App Package", message: "Guest is not connected.", style: .warning)
-            return
-        }
-
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = VPhoneInstallPackage.allowedContentTypes
-        panel.prompt = "Install"
-        panel.message = "Choose an IPA or TIPA package to install in the guest."
-
-        let response = panel.runModal()
-        guard response == .OK, let url = panel.url else { return }
-
+        guard let url = chooseInstallPackage(title: "Install App Package", message: "Choose an IPA or TIPA package to install in the guest.") else { return }
         Task {
             do {
                 let result = try await control.installIPA(localURL: url)
@@ -81,6 +72,38 @@ extension VPhoneMenuController {
                 showAlert(title: "Install App Package", message: "\(error)", style: .warning)
             }
         }
+    }
+
+    @objc func installIPAIntoLiveContainer() {
+        let title = "Install into LiveContainer"
+        guard let url = chooseInstallPackage(title: title, message: "Choose an IPA to add to LiveContainer's app list.") else { return }
+        Task {
+            do {
+                let result = try await control.installIntoLiveContainer(localURL: url)
+                print("[install] \(result)")
+                showAlert(title: title, message: result, style: .informational)
+            } catch {
+                showAlert(title: title, message: "\(error)", style: .warning)
+            }
+        }
+    }
+
+    private func chooseInstallPackage(title: String, message: String) -> URL? {
+        guard control.isConnected else {
+            showAlert(title: title, message: "Guest is not connected.", style: .warning)
+            return nil
+        }
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = VPhoneInstallPackage.allowedContentTypes
+        panel.prompt = "Install"
+        panel.message = message
+
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
     }
 
     @objc func openURL() {

@@ -273,6 +273,10 @@ static NSDictionary *handle_command(NSDictionary *msg) {
     return vp_handle_custom_install(msg);
   }
 
+  if ([type isEqualToString:@"lc_install"]) {
+    return vp_handle_lc_install(msg);
+  }
+
   NSMutableDictionary *r = vp_make_response(@"err", reqId);
   r[@"msg"] = [NSString stringWithFormat:@"unknown type: %@", type];
   return r;
@@ -333,6 +337,7 @@ static BOOL handle_client(int fd) {
       [caps addObject:@"location"];
     if (vp_custom_installer_available())
       [caps addObject:@"ipa_install"];
+    [caps addObject:@"lc_install"];
     if (gClipboardAvailable)
       [caps addObject:@"clipboard"];
     if (gAppsAvailable)

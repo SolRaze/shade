@@ -527,6 +527,36 @@ class VPhoneControl {
         return "Installed \(localURL.lastPathComponent) through the built-in IPA installer."
     }
 
+    /// Installs the IPA's app into LiveContainer's own app list instead of
+    /// SpringBoard, then relaunches LiveContainer so it rescans the list.
+    func installIntoLiveContainer(localURL: URL, liveContainerID: String = "com.kdt.livecontainer") async throws -> String {
+        let data: Data
+        do {
+            data = try Data(contentsOf: localURL)
+        } catch {
+            throw ControlError.protocolError("failed to read IPA: \(error)")
+        }
+
+        let remoteDir = "/var/mobile/Documents/vphone-installs"
+        let remotePath = "\(remoteDir)/\(UUID().uuidString)-\(localURL.lastPathComponent)"
+        try await createDirectory(path: remoteDir)
+        try await uploadFile(path: remotePath, data: data)
+
+        let resp: [String: Any]
+        do {
+            (resp, _) = try await sendRequest(["t": "lc_install", "path": remotePath, "bundle_id": liveContainerID])
+        } catch let ControlError.guestError(message) where message == "unknown type: lc_install" {
+            try? await deleteFile(path: remotePath)
+            throw ControlError.guestError(
+                "Guest vphoned does not support lc_install yet. Reconnect or reboot the guest so the updated daemon can take over."
+            )
+        }
+
+        try? await appTerminate(bundleId: liveContainerID)
+        _ = try? await appLaunch(bundleId: liveContainerID)
+        return resp["msg"] as? String ?? "Added \(localURL.lastPathComponent) to LiveContainer."
+    }
+
     // MARK: - Keychain Operations
 
     struct KeychainResult {
@@ -938,7 +968,7 @@ class VPhoneControl {
 
     private static func timeoutForRequest(type: String) -> TimeInterval {
         switch type {
-        case "file_get", "file_put", "ipa_install":
+        case "file_get", "file_put", "ipa_install", "lc_install":
             transferRequestTimeout
         case "devmode", "file_list", "file_delete", "file_rename", "file_mkdir", "keychain_list",
              "app_list", "app_launch", "open_url", "accessibility_tree":
