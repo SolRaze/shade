@@ -16,7 +16,9 @@ guest probe leftovers
 `MARK.txt` in `/var/mobile/Media/Downloads`, `/var/mobile/Downloads`, `/var/mobile/Documents` | root-owned, mode 666 | delete
 
 livecontainer
-not installed in the guest
+installed | `com.kdt.livecontainer` | `com.kdt.LiveContainer2` | `com.kdt.LiveContainer3` | no apps inside
+JIT-less cert loaded in all three | runs normal apps | TXM kills code that rewrites its own `__TEXT`
+open: wire `installIPA` in `VPhoneCLI.swift` into the vphone pill
 
 done and verified
 raw key forwarding | keyDown/keyUp/flagsChanged straight to the guest keyboard, shift and Cmd chords intact
