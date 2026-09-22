@@ -9,10 +9,6 @@ window already reserves the strip: content 406x890 around a 390x844 panel, `vmVi
 standard buttons exist under `.titled` + `.fullSizeContentView` and are `isHidden = true` in `VPhoneWindowController` | alpha on an NSTrackingArea over the strip is the route
 window must not `orderOut`: last window ordered out counts as last window closed, `applicationShouldTerminateAfterLastWindowClosed` returns `!cli.noGraphics` and the guest dies with the app
 
-apple id login
-guest cannot sign in | Settings shows "Finish Setting Up Your iPhone" | Wi-Fi reads Off with Ethernet only
-untouched | start at the network stack the guest presents to Setup Assistant
-
 status bar insets
 guest status bar metrics still differ from a real 17e | cosmetic
 
