@@ -677,6 +677,7 @@ static BOOL vp_mark_container_as_managed(NSString *containerPath) {
 static int vp_install_app_from_package(
     NSString *appPackagePath,
     BOOL forceSystem,
+    BOOL presigned,
     NSString *certPath,
     NSString *ldidPath,
     NSString **detailOutput
@@ -699,11 +700,15 @@ static int vp_install_app_from_package(
         return 179;
     }
 
-    NSString *signOutput = @"";
-    int signRet = vp_sign_app(appBundleToInstallPath, certPath, ldidPath, &signOutput);
-    if (signRet != 0) {
-        if (detailOutput) *detailOutput = signOutput;
-        return signRet;
+    // A host that has ldid signs before upload, which is the only way a stock
+    // VM installs anything: nothing on the device ships an iOS ldid.
+    if (!presigned) {
+        NSString *signOutput = @"";
+        int signRet = vp_sign_app(appBundleToInstallPath, certPath, ldidPath, &signOutput);
+        if (signRet != 0) {
+            if (detailOutput) *detailOutput = signOutput;
+            return signRet;
+        }
     }
 
     Class appContainerClass = NSClassFromString(@"MCMAppContainer");
@@ -790,6 +795,7 @@ NSDictionary *vp_handle_custom_install(NSDictionary *msg) {
     NSString *certPath = msg[@"cert_path"];
     NSString *ldidPath = vp_find_ldid_path();
     BOOL forceSystem = [registration isEqualToString:@"System"];
+    BOOL presigned = [msg[@"presigned"] boolValue];
 
     if (ipaPath.length == 0) {
         NSMutableDictionary *response = vp_make_response(@"err", reqId);
@@ -810,9 +816,10 @@ NSDictionary *vp_handle_custom_install(NSDictionary *msg) {
         response[@"msg"] = [NSString stringWithFormat:@"Built-in IPA installer prerequisites are missing: %@", detail];
         return response;
     }
-    if (ldidPath.length == 0) {
+    if (!presigned && ldidPath.length == 0) {
         NSMutableDictionary *response = vp_make_response(@"err", reqId);
-        response[@"msg"] = @"Built-in IPA installer could not find a guest-side iOS ldid.";
+        response[@"msg"] = @"IPA arrived unsigned and no iOS ldid is installed on the guest. "
+                            "Install ldid, or run an app build that signs on the host.";
         return response;
     }
     if (certPath.length > 0 && ![[NSFileManager defaultManager] fileExistsAtPath:certPath]) {
@@ -830,7 +837,8 @@ NSDictionary *vp_handle_custom_install(NSDictionary *msg) {
     int extractRet = vp_extract_package_to_directory(ipaPath, tmpPackagePath, &detail);
     int installRet = 0;
     if (extractRet == 0) {
-        installRet = vp_install_app_from_package(tmpPackagePath, forceSystem, certPath, ldidPath, &detail);
+        installRet = vp_install_app_from_package(
+            tmpPackagePath, forceSystem, presigned, certPath, ldidPath, &detail);
     }
 
     [[NSFileManager defaultManager] removeItemAtPath:tmpPackagePath error:nil];

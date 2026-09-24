@@ -103,7 +103,11 @@ final class VPhoneTouchIDMonitor {
 
     /// Enables or disables Touch ID forwarding. Setting to false cancels the active
     /// BiometricKit session and unloads the framework; setting to true reconnects.
-    var isEnabled: Bool = true {
+    ///
+    /// Seeded from the pref the Keys menu writes, so a session the user turned
+    /// off never opens the XPC link to biometrickitd just to tear it down once
+    /// the menu is built.
+    var isEnabled: Bool = !UserDefaults.standard.bool(forKey: "touchIDForwardingDisabled") {
         didSet {
             guard isEnabled != oldValue else { return }
             if isEnabled {

@@ -168,7 +168,8 @@ class VPhoneAppDelegate: NSObject, NSApplicationDelegate {
             hostControl = hc
 
             // Wire location toggle through onConnect/onDisconnect
-            control.onConnect = { [weak mc, weak provider = locationProvider] caps in
+            control.onConnect = { [weak mc, weak wc, weak provider = locationProvider] caps in
+                wc?.refreshTitle()
                 mc?.updateConnectAvailability(available: true)
                 mc?.updateInstallAvailability(
                     available: caps.contains("ipa_install"), liveContainer: caps.contains("lc_install")
@@ -192,7 +193,9 @@ class VPhoneAppDelegate: NSObject, NSApplicationDelegate {
                     await self?.installPackageIfRequested(caps: caps)
                 }
             }
-            control.onDisconnect = { [weak mc, weak provider = locationProvider] in
+            control.onDisconnect = { [weak mc, weak wc, weak provider = locationProvider] in
+                wc?.refreshTitle()
+                wc?.captureView?.cancelActiveTouches()
                 mc?.updateConnectAvailability(available: false)
                 mc?.updateInstallAvailability(available: false)
                 mc?.updateAppsAvailability(available: false)

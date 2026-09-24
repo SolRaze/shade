@@ -90,7 +90,8 @@ public enum VPhoneBundleOps {
         bundleNamed name: String, in library: VPhoneLibrary,
         cpuCount: UInt?, memoryMB: UInt64?,
         networkMode: VPhoneVirtualMachineManifest.NetworkConfig.NetworkMode? = nil,
-        bridgeInterface: String? = nil
+        bridgeInterface: String? = nil,
+        screenScaleDivisor: Int? = nil
     ) throws -> VPhoneBundle {
         let bundle = try library.bundle(named: name)
         let editsNetwork = networkMode != nil || bridgeInterface != nil
@@ -102,7 +103,9 @@ public enum VPhoneBundleOps {
         let updated = bundle.manifest.updating(
             cpuCount: cpuCount,
             memorySize: memoryMB.map { $0 * 1024 * 1024 },
-            screenConfig: nil,
+            screenConfig: screenScaleDivisor.map {
+                VPhoneVirtualMachineManifest.ScreenConfig.divided(by: $0)
+            },
             networkConfig: network)
         try updated.write(to: bundle.configURL)
         return VPhoneBundle(url: bundle.url, manifest: updated)

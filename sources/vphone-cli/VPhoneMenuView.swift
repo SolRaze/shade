@@ -11,8 +11,8 @@ extension VPhoneMenuController {
     /// 212x471 with chrome, as a fraction of this guest's panel.
     /// applyPanelSize shrinks any of them to fit the screen the window is on.
     ///
-    /// The main menu gets key equivalents before the key window's responder
-    /// chain, so these six chords never reach the guest keyboard.
+    /// The VM view offers every Cmd chord to the main menu before forwarding
+    /// it, so these six never reach the guest keyboard.
     func buildViewMenu() -> NSMenuItem {
         let item = NSMenuItem()
         let menu = NSMenu(title: "View")

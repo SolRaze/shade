@@ -42,6 +42,12 @@ class VPhoneControl {
         else { return false }
         return major < 26
     }
+
+    /// Whether the guest daemon accepts multi-finger events, needed for pinch
+    /// and rotate. Older daemons only carry the single-finger `touch` verb.
+    var supportsGuestMultiTouch: Bool {
+        useGuestTouchInjection && guestCaps.contains("touches")
+    }
     /// Path to the signed vphoned binary. When set, enables auto-update.
     var guestBinaryURL: URL?
 
@@ -322,6 +328,25 @@ class VPhoneControl {
         }
     }
 
+    /// Inject a multi-finger digitizer event guest-side. The guest derives each
+    /// finger's identity from its position in the array, so a gesture has to
+    /// send its fingers in the same order every time or the guest reads each
+    /// event as a fresh set of touches.
+    func sendTouches(_ fingers: [(phase: Int, x: Double, y: Double)]) {
+        guard !fingers.isEmpty else { return }
+        nextRequestId += 1
+        let msg: [String: Any] = [
+            "v": Self.protocolVersion,
+            "t": "touches",
+            "id": String(nextRequestId, radix: 16),
+            "fingers": fingers.map { ["phase": $0.phase, "x": $0.x, "y": $0.y] },
+        ]
+        guard let fd = connection?.fileDescriptor, writeMessage(fd: fd, dict: msg) else {
+            print("[control] touches send failed (not connected)")
+            return
+        }
+    }
+
     // MARK: - Developer Mode
 
     struct DevModeStatus {
@@ -483,9 +508,26 @@ class VPhoneControl {
     }
 
     private func installIPAWithBuiltInInstaller(localURL: URL) async throws -> String {
+        // Sign here, not on the guest: a stock VM carries no iOS ldid, so the
+        // guest can only sign once somebody has installed one by hand.
+        var sourceURL = localURL
+        var presigned = false
+        var signScratch: URL?
+        defer { signScratch.map { try? FileManager.default.removeItem(at: $0) } }
+        if guestCaps.contains("presigned"), let signCertURL = Self.signCertURL() {
+            do {
+                let signed = try VPhoneIPASigner.sign(ipa: localURL, certificate: signCertURL)
+                sourceURL = signed.ipa
+                signScratch = signed.scratch
+                presigned = true
+            } catch {
+                print("[install] host signing unavailable, leaving it to the guest: \(error)")
+            }
+        }
+
         let data: Data
         do {
-            data = try Data(contentsOf: localURL)
+            data = try Data(contentsOf: sourceURL)
         } catch {
             throw ControlError.protocolError("failed to read IPA: \(error)")
         }
@@ -510,9 +552,10 @@ class VPhoneControl {
             "t": "ipa_install",
             "path": remotePath,
             "registration": "User",
+            "presigned": presigned,
         ]
 
-        if let signCertURL = Self.signCertURL() {
+        if !presigned, let signCertURL = Self.signCertURL() {
             let signCertData = try Data(contentsOf: signCertURL)
             let certRemotePath = "\(remoteDir)/\(UUID().uuidString)-signcert.p12"
             cleanupPaths.append(certRemotePath)

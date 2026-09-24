@@ -2,29 +2,69 @@ import AppKit
 import Dynamic
 import Foundation
 import Virtualization
+import VPhoneCore
 
 class VPhoneVirtualMachineView: VZVirtualMachineView {
     var keyHelper: VPhoneKeyHelper?
     weak var control: VPhoneControl?
 
     private var currentTouchSwipeAim: Int = 0
+    /// Where the pressed mouse last was, nil when no button is down. Only set so
+    /// an interrupted drag can be lifted.
+    private var activeMousePoint: NSPoint?
+    /// Live pinch or rotate. Both host gestures drive one pair of fingers.
+    private var pinch: VPhoneTwoFingerGesture?
+    /// Where the finger a host scroll drives currently sits, nil when no scroll
+    /// is in flight.
+    private var scrollPoint: NSPoint?
+    private var scrollLift: DispatchWorkItem?
+    private var contextTouchStart: TimeInterval?
+    private var contextLift: DispatchWorkItem?
+    /// Longer than `UILongPressGestureRecognizer`'s 0.5 s default, which is
+    /// what a context menu waits for.
+    private static let contextHold: TimeInterval = 0.6
+    private var resignKeyObserver: NSObjectProtocol?
     private var heldModifiers: Set<UInt16> = []
     /// Left and right Shift, Control, Option, Command, plus Caps Lock and Fn.
     private static let modifierKeyCodes: Set<UInt16> = [0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F]
     private var isDragHighlightVisible = false
 
+    /// Touch phases, numbered as `UITouch.Phase` is — `_VZTouch` and vphoned's
+    /// digitizer injection both take these values directly.
+    private enum Phase {
+        static let down = 0, moved = 1, ended = 3, cancelled = 4
+    }
+
+    /// One finger of a synthetic multi-touch event, positioned in view-local
+    /// points. `index` is the finger's identity and must stay the same for the
+    /// life of a gesture.
+    private struct Finger {
+        var index: Int
+        var phase: Int
+        var location: NSPoint
+    }
+
     // MARK: - Private API Accessors
 
     /// https://github.com/wh1te4ever/super-tart-vphone-writeup/blob/main/contents/ScreenSharingVNC.swift
+    ///
+    /// Resolved once. The VM's device set is fixed by its configuration, so the
+    /// array cannot change while this view has a VM, and a drag asks for the
+    /// device on every touch event.
     private var multiTouchDevice: AnyObject? {
+        if let cachedMultiTouchDevice { return cachedMultiTouchDevice }
         guard let vm = virtualMachine else { return nil }
         guard let devices = Dynamic(vm)._multiTouchDevices.asObject as? NSArray,
               devices.count > 0
         else {
             return nil
         }
-        return devices.object(at: 0) as AnyObject
+        let device = devices.object(at: 0) as AnyObject
+        cachedMultiTouchDevice = device
+        return device
     }
+
+    private var cachedMultiTouchDevice: AnyObject?
 
     var recordingGraphicsDisplay: VZGraphicsDisplay? {
         if let display = Dynamic(self)._graphicsDisplay.asObject as? VZGraphicsDisplay {
@@ -48,34 +88,107 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
         // Ensure keyboard events route to VM view right after window attach.
         window?.makeFirstResponder(self)
         registerForDraggedTypes([.fileURL])
+
+        if let resignKeyObserver {
+            NotificationCenter.default.removeObserver(resignKeyObserver)
+            self.resignKeyObserver = nil
+        }
+        // A drag that ends outside the window never delivers its mouse-up here.
+        guard let window else { return }
+        resignKeyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.cancelActiveTouches() }
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
         // Clicking the VM display should always restore keyboard focus.
         window?.makeFirstResponder(self)
+        liftContextTouch()
         let localPoint = convert(event.locationInWindow, from: nil)
         currentTouchSwipeAim = hitTestEdge(at: localPoint)
-        if sendTouchEvent(phase: 0, localPoint: localPoint, timestamp: event.timestamp) { return }
+        activeMousePoint = localPoint
+        if sendTouchEvent(phase: Phase.down, localPoint: localPoint, timestamp: event.timestamp) { return }
+        activeMousePoint = nil
         super.mouseDown(with: event)
     }
 
     override func mouseDragged(with event: NSEvent) {
         let localPoint = convert(event.locationInWindow, from: nil)
-        if sendTouchEvent(phase: 1, localPoint: localPoint, timestamp: event.timestamp) { return }
+        if activeMousePoint != nil { activeMousePoint = localPoint }
+        if sendTouchEvent(phase: Phase.moved, localPoint: localPoint, timestamp: event.timestamp) { return }
         super.mouseDragged(with: event)
     }
 
     override func mouseUp(with event: NSEvent) {
         let localPoint = convert(event.locationInWindow, from: nil)
-        if !sendTouchEvent(phase: 3, localPoint: localPoint, timestamp: event.timestamp) {
+        activeMousePoint = nil
+        if !sendTouchEvent(phase: Phase.ended, localPoint: localPoint, timestamp: event.timestamp) {
             super.mouseUp(with: event)
         }
         currentTouchSwipeAim = 0
     }
 
-    override func rightMouseDown(with _: NSEvent) {
-        guard let keyHelper else { return }
-        keyHelper.sendHome()
+    /// Right-click is touch-and-hold, as in iPhone Mirroring: it opens the
+    /// context menu under the pointer. The finger stays down at least
+    /// `contextHold`, so a quick click still crosses the guest's long-press
+    /// threshold, and dragging while held moves it, which picks up an icon.
+    override func rightMouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        liftContextTouch()
+        let localPoint = convert(event.locationInWindow, from: nil)
+        currentTouchSwipeAim = 0
+        guard sendTouchEvent(phase: Phase.down, localPoint: localPoint, timestamp: event.timestamp) else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        activeMousePoint = localPoint
+        contextTouchStart = event.timestamp
+    }
+
+    override func rightMouseDragged(with event: NSEvent) {
+        guard contextTouchStart != nil else {
+            super.rightMouseDragged(with: event)
+            return
+        }
+        let localPoint = convert(event.locationInWindow, from: nil)
+        activeMousePoint = localPoint
+        sendTouchEvent(phase: Phase.moved, localPoint: localPoint, timestamp: event.timestamp)
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        guard let start = contextTouchStart else {
+            super.rightMouseUp(with: event)
+            return
+        }
+        contextTouchStart = nil
+        let lift = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.endContextTouch() }
+        }
+        contextLift = lift
+        let remaining = Self.contextHold - (event.timestamp - start)
+        if remaining > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + remaining, execute: lift)
+        } else {
+            lift.perform()
+        }
+    }
+
+    private func endContextTouch() {
+        contextLift = nil
+        guard let point = activeMousePoint else { return }
+        activeMousePoint = nil
+        sendTouchEvent(phase: Phase.ended, localPoint: point, timestamp: ProcessInfo.processInfo.systemUptime)
+    }
+
+    /// Ends a held right-click now rather than when its hold runs out, so the
+    /// next touch does not land while the guest still has that finger down.
+    private func liftContextTouch() {
+        guard let lift = contextLift else { return }
+        // Cancel after, not before: a cancelled item skips perform() too.
+        lift.perform()
+        lift.cancel()
     }
 
     /// Mouse side buttons: 3 is back, 4 is forward. iOS has no back key, so
@@ -98,6 +211,138 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
         }
     }
 
+    // MARK: - Host Gestures
+
+    /// Host scrolling drives one finger, because a touchscreen guest has no
+    /// scroll wheel and `UIScrollView` only follows a drag.
+    ///
+    /// Momentum events are dropped: the guest derives its own deceleration from
+    /// the drag it saw, so replaying the host's would compound it.
+    override func scrollWheel(with event: NSEvent) {
+        guard event.momentumPhase.isEmpty else { return }
+
+        // Precise deltas are already points; a notched wheel reports lines.
+        let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
+        if scrollPoint == nil {
+            let start = convert(event.locationInWindow, from: nil)
+            guard bounds.contains(start),
+                  sendTouchEvent(phase: Phase.down, localPoint: start, timestamp: event.timestamp)
+            else {
+                super.scrollWheel(with: event)
+                return
+            }
+            scrollPoint = start
+        }
+
+        // Positive deltas are a fingers-down, fingers-right swipe. The view is
+        // y-up, so the vertical one inverts.
+        var point = scrollPoint ?? .zero
+        point.x += event.scrollingDeltaX * scale
+        point.y -= event.scrollingDeltaY * scale
+        point.x = max(0, min(bounds.width, point.x))
+        point.y = max(0, min(bounds.height, point.y))
+        scrollPoint = point
+        sendTouchEvent(phase: Phase.moved, localPoint: point, timestamp: event.timestamp)
+
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+            endScroll(phase: event.phase.contains(.cancelled) ? Phase.cancelled : Phase.ended)
+        } else if event.phase.isEmpty {
+            // A notched wheel never reports an end, so idle time is the only
+            // signal that the gesture is over.
+            scheduleScrollLift()
+        }
+    }
+
+    override func magnify(with event: NSEvent) {
+        if !updatePinch(with: event, scale: 1 + event.magnification, radians: 0) {
+            super.magnify(with: event)
+        }
+    }
+
+    override func rotate(with event: NSEvent) {
+        // NSEvent.rotation is degrees, counter-clockwise positive.
+        if !updatePinch(with: event, scale: 1, radians: CGFloat(event.rotation) * .pi / 180) {
+            super.rotate(with: event)
+        }
+    }
+
+    /// Advances the two-finger pair a pinch or rotate event describes. Returns
+    /// false when the guest could not take it.
+    private func updatePinch(with event: NSEvent, scale: CGFloat, radians: CGFloat) -> Bool {
+        switch event.phase {
+        case .began:
+            let gesture = VPhoneTwoFingerGesture(
+                centre: convert(event.locationInWindow, from: nil), bounds: bounds.size
+            )
+            guard sendPinch(gesture, phase: Phase.down, timestamp: event.timestamp) else { return false }
+            pinch = gesture
+            return true
+        case .changed:
+            guard var gesture = pinch else { return false }
+            gesture.apply(scale: scale, radians: radians, bounds: bounds.size)
+            pinch = gesture
+            return sendPinch(gesture, phase: Phase.moved, timestamp: event.timestamp)
+        case .ended, .cancelled:
+            guard let gesture = pinch else { return false }
+            pinch = nil
+            return sendPinch(
+                gesture, phase: event.phase == .cancelled ? Phase.cancelled : Phase.ended,
+                timestamp: event.timestamp
+            )
+        default:
+            return false
+        }
+    }
+
+    @discardableResult
+    private func sendPinch(
+        _ gesture: VPhoneTwoFingerGesture, phase: Int, timestamp: TimeInterval
+    ) -> Bool {
+        let fingers = gesture.points.enumerated().map {
+            Finger(index: $0.offset, phase: phase, location: $0.element)
+        }
+        return sendTouchEvent(fingers: fingers, timestamp: timestamp)
+    }
+
+    private func scheduleScrollLift() {
+        scrollLift?.cancel()
+        let lift = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.endScroll(phase: Phase.ended) }
+        }
+        scrollLift = lift
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: lift)
+    }
+
+    private func endScroll(phase: Int) {
+        scrollLift?.cancel()
+        scrollLift = nil
+        guard let point = scrollPoint else { return }
+        scrollPoint = nil
+        sendTouchEvent(phase: phase, localPoint: point, timestamp: ProcessInfo.processInfo.systemUptime)
+    }
+
+    /// Lifts everything the guest still believes is on the screen.
+    ///
+    /// A drag whose mouse-up lands in another window, or one cut short by the
+    /// guest dropping the control connection, otherwise leaves a finger down and
+    /// the guest stuck mid-gesture.
+    func cancelActiveTouches() {
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        endScroll(phase: Phase.cancelled)
+        contextLift?.cancel()
+        contextLift = nil
+        contextTouchStart = nil
+        if let gesture = pinch {
+            pinch = nil
+            sendPinch(gesture, phase: Phase.cancelled, timestamp: timestamp)
+        }
+        if let point = activeMousePoint {
+            activeMousePoint = nil
+            sendTouchEvent(phase: Phase.cancelled, localPoint: point, timestamp: timestamp)
+            currentTouchSwipeAim = 0
+        }
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.contains(.command),
            event.charactersIgnoringModifiers == "h"
@@ -112,6 +357,13 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
            event.charactersIgnoringModifiers?.lowercased() == "v"
         {
             keyHelper?.typeFromClipboard()
+            return true
+        }
+        // The main menu keeps its own chords: ⌘1/⌘2/⌘3 for Home, App Switcher
+        // and Spotlight, the View sizes, ⌘W and ⌘Q.
+        if event.modifierFlags.contains(.command),
+           NSApp.mainMenu?.performKeyEquivalent(with: event) == true
+        {
             return true
         }
         // AppKit routes Cmd chords here instead of keyDown, so the guest would
@@ -383,13 +635,33 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
 
     @discardableResult
     private func sendTouchEvent(phase: Int, localPoint: NSPoint, timestamp: TimeInterval) -> Bool {
-        let normalizedPoint = normalizeCoordinate(localPoint)
+        sendTouchEvent(
+            fingers: [Finger(index: 0, phase: phase, location: localPoint)], timestamp: timestamp
+        )
+    }
+
+    /// Delivers one multi-touch event to the guest. Returns false when no path
+    /// took it, so the caller can hand the host event back to AppKit.
+    @discardableResult
+    private func sendTouchEvent(fingers: [Finger], timestamp: TimeInterval) -> Bool {
+        guard !fingers.isEmpty else { return false }
 
         // iOS 18 bases: the VZ USB touchscreen dext emits no digitizer events on
         // the 26.x kernel, so route touches through vphoned's guest-side HID
         // injection. 26.x bases fall through to the native VZ multitouch path.
         if let control, control.useGuestTouchInjection {
-            control.sendTouch(phase: phase, x: Double(normalizedPoint.x), y: Double(normalizedPoint.y))
+            let normalized = fingers.map { finger -> (phase: Int, x: Double, y: Double) in
+                let point = normalizeCoordinate(finger.location)
+                return (phase: finger.phase, x: Double(point.x), y: Double(point.y))
+            }
+            if let only = normalized.first, normalized.count == 1 {
+                control.sendTouch(phase: only.phase, x: only.x, y: only.y)
+                return true
+            }
+            // A daemon too old to carry several fingers would read the first one
+            // as a plain drag, which scrolls instead of pinching. Drop it.
+            guard control.supportsGuestMultiTouch else { return false }
+            control.sendTouches(normalized)
             return true
         }
 
@@ -397,21 +669,24 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
               virtualMachine != nil
         else { return false }
 
-        let touch = Dynamic._VZTouch(
-            view: self,
-            index: 0,
-            phase: phase,
-            location: normalizedPoint,
-            swipeAim: currentTouchSwipeAim,
-            timestamp: timestamp
-        )
-
-        guard let touchObj = touch.asObject else {
-            print("[vphone] Error: Failed to create _VZTouch")
-            return false
+        var touches: [AnyObject] = []
+        for finger in fingers {
+            let touch = Dynamic._VZTouch(
+                view: self,
+                index: finger.index,
+                phase: finger.phase,
+                location: normalizeCoordinate(finger.location),
+                swipeAim: currentTouchSwipeAim,
+                timestamp: timestamp
+            )
+            guard let touchObj = touch.asObject else {
+                print("[vphone] Error: Failed to create _VZTouch")
+                return false
+            }
+            touches.append(touchObj)
         }
 
-        let touchEvent = Dynamic._VZMultiTouchEvent(touches: [touchObj])
+        let touchEvent = Dynamic._VZMultiTouchEvent(touches: touches)
         guard let eventObj = touchEvent.asObject else { return false }
 
         Dynamic(device).sendMultiTouchEvents([eventObj] as NSArray)

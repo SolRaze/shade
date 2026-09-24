@@ -129,7 +129,7 @@ struct VPhoneVMNewCommand: ParsableCommand {
 
 struct VPhoneVMConfigCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "config", abstract: "Edit VM manifest fields (cpu/memory/network)")
+        commandName: "config", abstract: "Edit VM manifest fields (cpu/memory/network/screen)")
 
     @OptionGroup var lib: VPhoneLibraryOption
     @Argument(help: "VM name") var name: String?
@@ -138,16 +138,24 @@ struct VPhoneVMConfigCommand: ParsableCommand {
     @Option(name: [.customShort("n"), .long], help: "Network mode: nat | bridged | none") var network: String?
     @Option(name: .long, help: "Host interface to bridge (bridged mode; auto-picks first if omitted)")
     var bridgeInterface: String?
+    @Option(name: .customLong("screen-divisor"),
+            help: "Divide the guest panel resolution by N (1 = native 1290x2796). Fewer pixels to render and scale each frame.")
+    var screenDivisor: Int?
 
     func run() throws {
         let mode = try network.map(Self.parseMode)
+        if let screenDivisor, screenDivisor < 1 {
+            throw ValidationError("--screen-divisor must be 1 or greater")
+        }
         let name = try VPhoneVMSelection.resolveExisting(name, in: lib.library)
         let updated = try VPhoneBundleOps.updateConfig(
             bundleNamed: name, in: lib.library, cpuCount: cpu, memoryMB: memory,
-            networkMode: mode, bridgeInterface: bridgeInterface)
+            networkMode: mode, bridgeInterface: bridgeInterface,
+            screenScaleDivisor: screenDivisor)
         let m = updated.manifest
         print("updated \(updated.name): \(m.cpuCount) CPU, \(m.memorySize / (1024*1024)) MB, "
-            + "net=\(describeNetwork(m.networkConfig))")
+            + "net=\(describeNetwork(m.networkConfig)), "
+            + "screen=\(m.screenConfig.width)x\(m.screenConfig.height)@\(m.screenConfig.scale)x")
     }
 
     private static func parseMode(_ s: String)

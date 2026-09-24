@@ -100,6 +100,22 @@ public struct VPhoneVirtualMachineManifest: Codable, Sendable {
             self.pixelsPerInch = pixelsPerInch
             self.scale = scale
         }
+
+        /// Same physical panel at a fraction of the pixel count. `scale` drops with
+        /// the pixels so the guest keeps rendering UIKit at its native point size;
+        /// PPI drops too so the guest still believes it is a 6.1-inch display.
+        /// Divisor 1 returns the default. Everything above 1 trades sharpness for
+        /// a smaller surface to render, copy and scale every frame.
+        public static func divided(by divisor: Int) -> ScreenConfig {
+            let d = max(1, divisor)
+            guard d > 1 else { return .default }
+            return ScreenConfig(
+                width: `default`.width / d,
+                height: `default`.height / d,
+                pixelsPerInch: `default`.pixelsPerInch / d,
+                scale: max(1.0, `default`.scale / Double(d))
+            )
+        }
     }
 
     public struct NetworkConfig: Codable, Equatable, Sendable {

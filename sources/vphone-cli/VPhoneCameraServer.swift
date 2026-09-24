@@ -166,8 +166,9 @@ final class VPhoneCameraServer {
             onConnectionStateChange?(false)
         }
         if oldFD >= 0 { close(oldFD) }
-        // Note: streaming timer continues running but ticks no-op until
-        // connectionFD becomes valid again.
+        // Nothing to send without a socket. `attemptConnect` restarts streaming
+        // on success whenever a source is still selected.
+        stopStreaming()
         attemptConnect()
     }
 

@@ -100,21 +100,49 @@ void vp_hid_key(uint32_t page, uint32_t usage, BOOL down) {
     if (ev) { send_hid_event(ev); CFRelease(ev); }
 }
 
-// Build a display-integrated hand digitizer event carrying one finger and
-// dispatch it. Mirrors WebKit's HIDEventGenerator single-touch path.
-static void dispatch_digitizer(double x, double y, boolean_t range,
-                               boolean_t touch, uint32_t mask) {
+// Which digitizer fields a finger in this phase reports. A touch down or up
+// changes the button state and so must carry TOUCH and IDENTITY; a move only
+// reports a new position.
+static uint32_t finger_mask(int phase) {
+    return phase == 1 ? VP_DIG_POSITION : (VP_DIG_TOUCH | VP_DIG_IDENTITY);
+}
+
+static boolean_t finger_is_down(int phase) {
+    return (phase == 0 || phase == 1) ? 1 : 0;
+}
+
+// Build a display-integrated hand digitizer event carrying `count` fingers and
+// dispatch it. Mirrors WebKit's HIDEventGenerator touch path. The parent hand
+// event carries the centroid and the union of the fingers' masks; it counts as
+// in range and touching while any finger is still down.
+static void dispatch_fingers(const vp_hid_finger_t *fingers, int count) {
     if (!pDigitizer || !pFinger || !pAppend || !pSetInt) return;
+    if (!fingers || count < 1) return;
+
+    double cx = 0, cy = 0;
+    uint32_t mask = 0;
+    boolean_t down = 0;
+    for (int i = 0; i < count; i++) {
+        cx += fingers[i].x;
+        cy += fingers[i].y;
+        mask |= finger_mask(fingers[i].phase);
+        if (finger_is_down(fingers[i].phase)) down = 1;
+    }
+    cx /= count;
+    cy /= count;
 
     uint64_t ts = mach_absolute_time();
     IOHIDEventRef parent = pDigitizer(kCFAllocatorDefault, ts, VP_TRANSDUCER_HAND,
-                                      0, 0, mask, 0, x, y, 0, 0, 0, range, touch, 0);
+                                      0, 0, mask, 0, cx, cy, 0, 0, 0, down, down, 0);
     if (!parent) return;
     pSetInt(parent, VP_FIELD_IS_DISPLAY_INTEGRATED, 1);
 
-    IOHIDEventRef finger = pFinger(kCFAllocatorDefault, ts, 1, VP_TRANSDUCER_FINGER,
-                                   mask, x, y, 0, 0, 0, range, touch, 0);
-    if (finger) {
+    for (int i = 0; i < count; i++) {
+        boolean_t fdown = finger_is_down(fingers[i].phase);
+        IOHIDEventRef finger = pFinger(kCFAllocatorDefault, ts, i + 1, VP_TRANSDUCER_FINGER,
+                                       finger_mask(fingers[i].phase),
+                                       fingers[i].x, fingers[i].y, 0, 0, 0, fdown, fdown, 0);
+        if (!finger) continue;
         pSetInt(finger, VP_FIELD_IS_DISPLAY_INTEGRATED, 1);
         pAppend(parent, finger, 0);
         CFRelease(finger);
@@ -130,16 +158,10 @@ static void dispatch_digitizer(double x, double y, boolean_t range,
 }
 
 void vp_hid_touch(int phase, double x, double y) {
-    switch (phase) {
-    case 0: // down
-        dispatch_digitizer(x, y, 1, 1, VP_DIG_TOUCH | VP_DIG_IDENTITY);
-        break;
-    case 1: // move
-        dispatch_digitizer(x, y, 1, 1, VP_DIG_POSITION);
-        break;
-    case 3: // up
-    default:
-        dispatch_digitizer(x, y, 0, 0, VP_DIG_TOUCH | VP_DIG_IDENTITY);
-        break;
-    }
+    vp_hid_finger_t finger = { phase, x, y };
+    dispatch_fingers(&finger, 1);
+}
+
+void vp_hid_touches(const vp_hid_finger_t *fingers, int count) {
+    dispatch_fingers(fingers, count);
 }

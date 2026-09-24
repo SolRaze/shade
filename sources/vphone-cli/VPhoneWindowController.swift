@@ -1,11 +1,11 @@
 import AppKit
 import Foundation
 import Virtualization
+import VPhoneCore
 
 @MainActor
 class VPhoneWindowController: NSObject {
     private var windowController: NSWindowController?
-    private var statusTimer: Timer?
     private weak var control: VPhoneControl?
     private weak var virtualMachineView: VPhoneVirtualMachineView?
     private(set) var touchIDMonitor: VPhoneTouchIDMonitor?
@@ -73,7 +73,6 @@ class VPhoneWindowController: NSObject {
         )
 
         window.isReleasedWhenClosed = false
-        window.contentAspectRatio = contentSize
         window.title = "\(name) [loading]"
         window.subtitle = makeSubtitle(ip: nil)
 
@@ -126,13 +125,9 @@ class VPhoneWindowController: NSObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.applyPanelSize(to: window, panel: vmView) }
         }
-        if let ecid {
-            if !window.setFrameAutosaveName("vphone-\(ecid)") {
-                window.center()
-            }
-        } else {
-            window.center()
-        }
+        let restoredFrame = ecid.map { window.setFrameAutosaveName("vphone-\($0)") } ?? false
+        if !restoredFrame { window.center() }
+        tileAwayFromOtherGuests(window)
 
         let controller = NSWindowController(window: window)
         controller.showWindow(nil)
@@ -149,16 +144,22 @@ class VPhoneWindowController: NSObject {
         monitor.start(control: control, window: window)
         touchIDMonitor = monitor
 
-        // Poll vphoned status for title indicator
-        statusTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) {
-            [weak self, weak window] _ in
-            Task { @MainActor in
-                guard let self, let window, let control = self.control else { return }
-                window.title =
-                    control.isConnected ? "\(self.name) [connected]" : "\(self.name) [disconnected]"
-                window.subtitle = self.makeSubtitle(ip: control.isConnected ? control.guestIP : nil)
-            }
-        }
+        refreshTitle()
+    }
+
+    /// Writes the guest's connection state into the titlebar.
+    ///
+    /// `VPhoneControl` sets `isConnected` and `guestIP` before it calls
+    /// `onConnect`, and clears both before `onDisconnect`, so those two
+    /// callbacks are the only moments this can change.
+    func refreshTitle() {
+        guard let window = windowController?.window, let control else { return }
+        // Assigning either one dirties the titlebar and relayouts it, so only
+        // write on an actual change.
+        let title = control.isConnected ? "\(name) [connected]" : "\(name) [disconnected]"
+        let subtitle = makeSubtitle(ip: control.isConnected ? control.guestIP : nil)
+        if window.title != title { window.title = title }
+        if window.subtitle != subtitle { window.subtitle = subtitle }
     }
 
     // Clipboard follows focus, the way iPhone Mirroring shares one: whatever was
@@ -231,6 +232,50 @@ class VPhoneWindowController: NSObject {
         applyPanelSize(to: window, panel: panel)
     }
 
+    // MARK: - Tiling
+
+    /// Move `window` clear of guest windows belonging to other vphone-cli
+    /// processes, so booting a second guest tiles beside the first instead of
+    /// landing exactly on top of it.
+    ///
+    /// Only this window moves. Reaching into another process's windows needs the
+    /// Accessibility API and the permission prompt that comes with it, and the
+    /// window server is enough to see where they are.
+    private func tileAwayFromOtherGuests(_ window: NSWindow) {
+        let occupied = Self.otherGuestWindowFrames()
+        guard !occupied.isEmpty,
+              let visible = (window.screen ?? NSScreen.main)?.visibleFrame
+        else { return }
+        let origin = VPhoneWindowTiling.origin(
+            for: window.frame.size, occupied: occupied, visibleFrame: visible)
+        window.setFrameOrigin(origin)
+    }
+
+    /// On-screen window frames owned by other processes running this same
+    /// executable, in AppKit screen coordinates.
+    ///
+    /// `kCGWindowBounds` is top-left origin measured down from the primary
+    /// display's top edge, which is not what NSWindow frames use.
+    private static func otherGuestWindowFrames() -> [NSRect] {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let ownName = ProcessInfo.processInfo.processName
+        guard let primaryTop = NSScreen.screens.first?.frame.maxY,
+              let list = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
+              as? [[String: Any]]
+        else { return [] }
+
+        return list.compactMap { info in
+            guard info[kCGWindowLayer as String] as? Int == 0,
+                  info[kCGWindowOwnerName as String] as? String == ownName,
+                  let pid = info[kCGWindowOwnerPID as String] as? Int32, pid != ownPID,
+                  let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
+                  let x = bounds["X"], let y = bounds["Y"],
+                  let w = bounds["Width"], let h = bounds["Height"]
+            else { return nil }
+            return NSRect(x: x, y: primaryTop - y - h, width: w, height: h)
+        }
+    }
+
     /// Resize the locked window to the current scale, shrunk to fit the screen it
     /// sits on. minSize and maxSize are equal, so both have to move before
     /// setContentSize takes.
@@ -252,7 +297,6 @@ class VPhoneWindowController: NSObject {
 
         window.minSize = contentSize
         window.maxSize = contentSize
-        window.contentAspectRatio = contentSize
         window.setContentSize(contentSize)
         cornerRadiusFraction = 43.25 / panelSize.width
         applyCornerRadius(to: panel)

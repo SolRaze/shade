@@ -185,6 +185,9 @@ static BOOL receive_update(int fd, NSUInteger size) {
 
 // MARK: - Command Dispatch
 
+// Upper bound on a `touches` message, matching a hand.
+#define VP_MAX_FINGERS 8
+
 static NSDictionary *handle_command(NSDictionary *msg) {
   NSString *type = msg[@"t"];
   id reqId = msg[@"id"];
@@ -206,6 +209,25 @@ static NSDictionary *handle_command(NSDictionary *msg) {
     double x = [msg[@"x"] doubleValue];
     double y = [msg[@"y"] doubleValue];
     vp_hid_touch(phase, x, y);
+    return vp_make_response(@"ok", reqId);
+  }
+
+  if ([type isEqualToString:@"touches"]) {
+    NSArray *list = msg[@"fingers"];
+    if (![list isKindOfClass:[NSArray class]] || list.count < 1 ||
+        list.count > VP_MAX_FINGERS) {
+      NSMutableDictionary *r = vp_make_response(@"err", reqId);
+      r[@"msg"] = @"fingers must hold 1 to 8 entries";
+      return r;
+    }
+    vp_hid_finger_t fingers[VP_MAX_FINGERS];
+    for (NSUInteger i = 0; i < list.count; i++) {
+      NSDictionary *f = list[i];
+      fingers[i].phase = [f[@"phase"] intValue];
+      fingers[i].x = [f[@"x"] doubleValue];
+      fingers[i].y = [f[@"y"] doubleValue];
+    }
+    vp_hid_touches(fingers, (int)list.count);
     return vp_make_response(@"ok", reqId);
   }
 
@@ -335,8 +357,12 @@ static BOOL handle_client(int fd) {
         arrayWithObjects:@"hid", @"devmode", @"file", @"keychain", nil];
     if (vp_location_available())
       [caps addObject:@"location"];
-    if (vp_custom_installer_available())
+    if (vp_custom_installer_available()) {
       [caps addObject:@"ipa_install"];
+      // Host only signs the IPA itself when it sees this; without it the host
+      // uploads the p12 and vp_sign_app runs guest-side.
+      [caps addObject:@"presigned"];
+    }
     [caps addObject:@"lc_install"];
     if (gClipboardAvailable)
       [caps addObject:@"clipboard"];
@@ -345,6 +371,7 @@ static BOOL handle_client(int fd) {
     [caps addObject:@"url"];
     [caps addObject:@"settings"];
     [caps addObject:@"touch"];
+    [caps addObject:@"touches"];
 
     NSMutableDictionary *helloResp = [@{
       @"v" : @PROTOCOL_VERSION,

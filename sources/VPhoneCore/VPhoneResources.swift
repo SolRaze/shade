@@ -60,6 +60,17 @@ public struct VPhoneResources: Sendable {
     public var apfsSnapRename: URL { base.appendingPathComponent("tools/apfs_snap_rename.py") }
     public var signcert: URL { scriptsDir.appendingPathComponent("vphoned/signcert.p12") }
 
+    /// The `ldid` the build already depends on. The .app carries its own copy;
+    /// a dev checkout falls back to the Homebrew one `make build` requires.
+    public var ldid: URL? {
+        let candidates = [
+            base.deletingLastPathComponent().appendingPathComponent("MacOS/ldid"),
+            URL(fileURLWithPath: "/opt/homebrew/bin/ldid"),
+            URL(fileURLWithPath: "/usr/local/bin/ldid"),
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
     public var vphoned: URL {
         let bundled = base.appendingPathComponent("vphoned.signed")
         if FileManager.default.fileExists(atPath: bundled.path) { return bundled }
