@@ -2,11 +2,15 @@ issues
 
 open work and known limits | v-deuce app layer only | firmware pipeline tracked upstream
 
-auto-hide toolbar strip
-wanted: iPhone Mirroring's hover chrome in the 36 pt top strip | close, minimize, zoom disabled at left | app-switcher grid and split-view icons at right | appears on pointer over the strip, fades out otherwise
-not started | an app-hide-on-deactivate build went in by mistake and is out again, sources and `mirror.sh` back to their earlier shape
-window already reserves the strip: content 406x890 around a 390x844 panel, `vmView` at x 8 y 10
-standard buttons exist under `.titled` + `.fullSizeContentView` and are `isHidden = true` in `VPhoneWindowController` | alpha on an NSTrackingArea over the strip is the route
+hover chrome
+iPhone Mirroring's top strip | close, minimize, zoom disabled at left | Home Screen and App Switcher at right | fades in on pointer over the 38 pt strip, out otherwise
+`installHoverChrome` in `VPhoneWindowController` | free-standing traffic lights, backing and buttons at alpha 0, driven by `VPhoneHoverStrip`'s tracking area
+no NSToolbar | a visible one raises `maxSize` by its own height, 890 becomes 898, and the size lock no longer holds
+14 pt ringed lights need the binary stamped SDK 26+ | SwiftPM stamps the 15.0 deployment target | `make build` restamps with `vtool` | without it AppKit draws legacy 12 pt lights
+corners fitted to the Mirroring window per row at 2x | panel 48 pt | chrome 19.75 pt top, 51.5 pt bottom | all `.continuous`
+fit check | `screencapture -x -o -l <id>` both windows | compare per-row alpha edge down each corner | backing #353535, glyphs #adadad, rim #656565 over #4f4f4f as captured
+Home Screen icon is a drawn 11 pt 3x3 grid | iPhone Mirroring's own `app.grid.3x3` is not a public symbol | App Switcher `iphone.app.switcher` is
+both buttons go through `VPhoneKeyHelper` and need vphoned connected
 window must not `orderOut`: last window ordered out counts as last window closed, `applicationShouldTerminateAfterLastWindowClosed` returns `!cli.noGraphics` and the guest dies with the app
 
 status bar insets

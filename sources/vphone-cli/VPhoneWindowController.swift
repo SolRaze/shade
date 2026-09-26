@@ -8,6 +8,7 @@ class VPhoneWindowController: NSObject {
     private var windowController: NSWindowController?
     private weak var control: VPhoneControl?
     private weak var virtualMachineView: VPhoneVirtualMachineView?
+    private weak var keyHelper: VPhoneKeyHelper?
     private(set) var touchIDMonitor: VPhoneTouchIDMonitor?
     private var ecid: String?
     // The VM bundle's directory name, which is what `vm list` calls this guest.
@@ -17,14 +18,15 @@ class VPhoneWindowController: NSObject {
     private var lastHostClipboardChange = NSPasteboard.general.changeCount
     private var lastGuestClipboardChange = 0
     // Handset corner radius as a fraction of panel width, so a resized window
-    // keeps the shape. 43.25 pt on a 390 pt-wide panel, matched against the
-    // iPhone Mirroring window: both bodies are 780x1688 px at 2x, and with
-    // .continuous corners the topmost opaque row is inset 106 px there.
-    // Verify by capturing both windows with `screencapture -l <id>` and
-    // comparing that inset — the alpha channel gives the shape, luminance does
-    // not (the guest's own wallpaper is black at the corners).
+    // keeps the shape. 48 pt on a 390 pt-wide panel, .continuous, fitted to
+    // the iPhone Mirroring window: both bodies are 780x1688 px at 2x.
+    // Verify by capturing both windows unhovered with `screencapture -l <id>`
+    // and comparing the per-row alpha edge down each corner — the alpha
+    // channel gives the shape, luminance does not (the guest's own wallpaper
+    // is black at the corners).
     private var cornerRadiusFraction: CGFloat = 0
     private var screenObserver: NSObjectProtocol?
+    private weak var chromeBacking: VPhoneChromeBacking?
     // The guest panel at its own point size, the View menu's Larger. Every
     // other View size is this multiplied by panelScale.
     private var basePanelSize: NSSize = .zero
@@ -39,6 +41,7 @@ class VPhoneWindowController: NSObject {
         keyHelper: VPhoneKeyHelper, control: VPhoneControl, ecid: String?, name: String
     ) {
         self.control = control
+        self.keyHelper = keyHelper
         self.ecid = ecid
         self.name = name
 
@@ -58,7 +61,7 @@ class VPhoneWindowController: NSObject {
         )
 
         // iPhone Mirroring's window is 406x890 around the same 390x844 body: 8 pt
-        // at the sides, 36 pt above, 10 pt below, all transparent. Matching it
+        // at the sides and below, 38 pt above, all transparent. Matching it
         // keeps the panel in the same place when a tiling WM pins the window to
         // the top of a node, and leaves the top strip free for a hover toolbar.
         let contentSize = NSSize(
@@ -78,7 +81,7 @@ class VPhoneWindowController: NSObject {
 
         let panelContainer = NSView(frame: NSRect(origin: .zero, size: contentSize))
         vmView.frame = NSRect(
-            x: 8, y: 10, width: windowSize.width, height: windowSize.height
+            x: 8, y: 8, width: windowSize.width, height: windowSize.height
         )
         vmView.autoresizingMask = [.width, .height]
         panelContainer.addSubview(vmView)
@@ -101,15 +104,13 @@ class VPhoneWindowController: NSObject {
         // Locked to the handset size. A tiling window manager resizes through
         // Accessibility, which AppKit clamps to these bounds, so the window keeps
         // its shape in a tile instead of stretching to the node.
+        installHoverChrome(in: window, over: panelContainer)
         window.minSize = contentSize
         window.maxSize = contentSize
-        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            window.standardWindowButton(button)?.isHidden = true
-        }
         // The window is locked to one of the View sizes; full screen would
         // stretch the guest panel, so the Window menu must not offer it.
         window.collectionBehavior.insert(.fullScreenNone)
-        cornerRadiusFraction = 43.25 / windowSize.width
+        cornerRadiusFraction = 48 / windowSize.width
         vmView.wantsLayer = true
         vmView.layer?.masksToBounds = true
         vmView.layer?.cornerCurve = .continuous
@@ -219,7 +220,9 @@ class VPhoneWindowController: NSObject {
     }
 
     private func applyCornerRadius(to view: NSView) {
-        view.layer?.cornerRadius = view.bounds.width * cornerRadiusFraction
+        let radius = view.bounds.width * cornerRadiusFraction
+        view.layer?.cornerRadius = radius
+        chromeBacking?.bottomRadius = radius * 51.5 / 48
     }
 
     /// The scale the View menu last applied, which is what its check mark shows.
@@ -298,9 +301,115 @@ class VPhoneWindowController: NSObject {
         window.minSize = contentSize
         window.maxSize = contentSize
         window.setContentSize(contentSize)
-        cornerRadiusFraction = 43.25 / panelSize.width
+        cornerRadiusFraction = 48 / panelSize.width
         applyCornerRadius(to: panel)
     }
+
+    // MARK: - Hover chrome
+
+    /// iPhone Mirroring's hover chrome, measured off `screencapture -l` of its
+    /// window at 2x: a grey backing, traffic lights centred 18.75 pt down on a
+    /// 23 pt pitch from 15.75 pt in, Home Screen and App Switcher centred 75.75
+    /// and 28.5 pt in from the right. The sRGB greys set here read back from a
+    /// capture as iPhone Mirroring's own: backing #353535, glyphs #adadad. All of
+    /// it sits at alpha 0 until the pointer is over the 38 pt strip.
+    ///
+    /// The lights draw 14 pt with a ring only when the binary is stamped SDK 26+
+    /// (the Makefile's `vtool` step); otherwise AppKit draws legacy 12 pt ones.
+    /// AppKit owns the titlebar's own lights' layout, so those stay hidden and
+    /// free-standing ones sit on the measured centres.
+    private func installHoverChrome(in window: NSWindow, over content: NSView) {
+        var lights: [NSButton] = []
+        for (index, type) in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].enumerated() {
+            window.standardWindowButton(type)?.isHidden = true
+            guard let light = NSWindow.standardWindowButton(type, for: window.styleMask) else { continue }
+            light.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(light)
+            NSLayoutConstraint.activate([
+                light.centerXAnchor.constraint(
+                    equalTo: content.leadingAnchor, constant: 15.75 + 23 * CGFloat(index)),
+                light.centerYAnchor.constraint(equalTo: content.topAnchor, constant: 18.75),
+            ])
+            lights.append(light)
+        }
+        // Size is locked, so zoom has nothing to do.
+        lights.last?.isEnabled = false
+
+        let backing = VPhoneChromeBacking(frame: content.bounds)
+        backing.autoresizingMask = [.width, .height]
+        content.addSubview(backing, positioned: .below, relativeTo: nil)
+        chromeBacking = backing
+
+        let home = makeChromeButton("Home Screen", image: Self.homeScreenGlyph, action: #selector(chromeHome))
+        let switcher = makeChromeButton(
+            "App Switcher",
+            image: NSImage(systemSymbolName: "iphone.app.switcher", accessibilityDescription: "App Switcher")?
+                .withSymbolConfiguration(.init(pointSize: 13, weight: .regular)),
+            action: #selector(chromeAppSwitcher)
+        )
+        for (button, inset) in [(home, 75.75), (switcher, 28.5)] {
+            content.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.centerXAnchor.constraint(equalTo: content.trailingAnchor, constant: -inset),
+                button.centerYAnchor.constraint(equalTo: content.topAnchor, constant: 18.75),
+                button.widthAnchor.constraint(equalToConstant: 28),
+                button.heightAnchor.constraint(equalToConstant: 28),
+            ])
+        }
+
+        let chrome = [backing, home, switcher] + lights
+        chrome.forEach { $0.alphaValue = 0 }
+        let strip = VPhoneHoverStrip(
+            frame: NSRect(x: 0, y: content.bounds.height - 38, width: content.bounds.width, height: 38)
+        )
+        strip.autoresizingMask = [.width, .minYMargin]
+        strip.onHover = { [weak window] inside in
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                chrome.forEach { $0.animator().alphaValue = inside ? 1 : 0 }
+            } completionHandler: {
+                // The shadow is cut from the window's alpha; the backing changes it.
+                window?.invalidateShadow()
+            }
+        }
+        content.addSubview(strip)
+    }
+
+    private func makeChromeButton(_ label: String, image: NSImage?, action: Selector) -> NSButton {
+        let button = NSButton(image: image ?? NSImage(), target: self, action: action)
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.contentTintColor = NSColor(srgbGray: 0x9E)
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        // The guest view keeps first responder; it is what feeds the keyboard.
+        button.refusesFirstResponder = true
+        return button
+    }
+
+    /// iPhone Mirroring's Home Screen glyph is its own `app.grid.3x3`, not a
+    /// public symbol: 2.9 pt tiles on a 4 pt pitch. The canvas is a point taller
+    /// than the grid, empty at the top, so centring it drops the grid onto
+    /// iPhone Mirroring's pixel rows.
+    private static let homeScreenGlyph: NSImage = {
+        let image = NSImage(size: NSSize(width: 11, height: 12), flipped: false) { _ in
+            NSColor.black.setFill()
+            for row in 0..<3 {
+                for column in 0..<3 {
+                    let tile = NSRect(x: CGFloat(column) * 4, y: CGFloat(row) * 4, width: 2.9, height: 2.9)
+                    NSBezierPath(roundedRect: tile, xRadius: 0.75, yRadius: 0.75).fill()
+                }
+            }
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Home Screen"
+        return image
+    }()
+
+    @objc private func chromeHome() { keyHelper?.sendHome() }
+    @objc private func chromeAppSwitcher() { keyHelper?.sendAppSwitcher() }
 
     private func makeSubtitle(ip: String?) -> String {
         switch (ecid, ip) {
@@ -311,4 +420,87 @@ class VPhoneWindowController: NSObject {
         }
     }
 
+}
+
+/// The hover chrome's backing: continuous corners, 19.75 pt at the top and
+/// 51.5 pt at the bottom around the 48 pt panel, and a 1 pt top edge in two
+/// half-point bands, lighter above. The mask is two halves because one layer
+/// takes one corner radius.
+private final class VPhoneChromeBacking: NSView {
+    private let upper = CALayer()
+    private let lower = CALayer()
+    private let edgeLight = CALayer()
+    private let edgeDark = CALayer()
+
+    var bottomRadius: CGFloat = 51.5 {
+        didSet { reshape() }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor(srgbGray: 0x28).cgColor
+        let mask = CALayer()
+        for (half, corners) in [(upper, CACornerMask([.layerMinXMaxYCorner, .layerMaxXMaxYCorner])),
+                                (lower, CACornerMask([.layerMinXMinYCorner, .layerMaxXMinYCorner]))] {
+            half.backgroundColor = .black
+            half.cornerCurve = .continuous
+            half.maskedCorners = corners
+            mask.addSublayer(half)
+        }
+        upper.cornerRadius = 19.75
+        layer?.mask = mask
+        edgeLight.backgroundColor = NSColor(srgbGray: 0x53).cgColor
+        edgeDark.backgroundColor = NSColor(srgbGray: 0x3F).cgColor
+        layer?.addSublayer(edgeLight)
+        layer?.addSublayer(edgeDark)
+        reshape()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        reshape()
+    }
+
+    private func reshape() {
+        let w = bounds.width, h = bounds.height
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.mask?.frame = bounds
+        upper.frame = CGRect(x: 0, y: h / 2 - 1, width: w, height: h / 2 + 1)
+        lower.frame = CGRect(x: 0, y: 0, width: w, height: h / 2 + 1)
+        lower.cornerRadius = bottomRadius
+        edgeLight.frame = CGRect(x: 0, y: h - 0.5, width: w, height: 0.5)
+        edgeDark.frame = CGRect(x: 0, y: h - 1, width: w, height: 0.5)
+        CATransaction.commit()
+    }
+}
+
+/// Reports the pointer entering and leaving the top strip. Never takes a click:
+/// the titlebar above it and the guest below it own those.
+private final class VPhoneHoverStrip: NSView {
+    var onHover: ((Bool) -> Void)?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self
+        ))
+    }
+
+    override func mouseEntered(with _: NSEvent) { onHover?(true) }
+    override func mouseExited(with _: NSEvent) { onHover?(false) }
+    override func hitTest(_: NSPoint) -> NSView? { nil }
+}
+
+private extension NSColor {
+    /// A grey from its 0-255 sRGB channel value.
+    convenience init(srgbGray value: Int) {
+        let v = CGFloat(value) / 255
+        self.init(srgbRed: v, green: v, blue: v, alpha: 1)
+    }
 }

@@ -219,6 +219,9 @@ $(BINARY): $(SWIFT_SOURCES) Package.swift $(ENTITLEMENTS)
 	@echo '// Auto-generated — do not edit' > $(BUILD_INFO)
 	@echo 'enum VPhoneBuildInfo { static let commitHash = "$(GIT_HASH)" }' >> $(BUILD_INFO)
 	@set -o pipefail; swift build -c release 2>&1 | tail -5
+	@# SwiftPM stamps the SDK as the 15.0 deployment target; AppKit draws the
+	@# macOS 26 chrome (14 pt traffic lights) only for an SDK 26+ stamp.
+	@vtool -set-build-version macos 15.0 26.0 -replace -output $@ $@ 2>/dev/null
 	@echo ""
 	@echo "=== Signing with entitlements ==="
 	codesign --force --sign - --entitlements $(ENTITLEMENTS) $@
