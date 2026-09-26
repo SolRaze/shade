@@ -334,6 +334,8 @@ class VPhoneWindowController: NSObject {
         }
         // Size is locked, so zoom has nothing to do.
         lights.last?.isEnabled = false
+        // Tooltips show on hover whichever app is active, as in iPhone Mirroring.
+        window.allowsToolTipsWhenApplicationIsInactive = true
 
         let backing = VPhoneChromeBacking(frame: content.bounds)
         backing.autoresizingMask = [.width, .height]
@@ -347,13 +349,17 @@ class VPhoneWindowController: NSObject {
                 .withSymbolConfiguration(.init(pointSize: 13, weight: .regular)),
             action: #selector(chromeAppSwitcher)
         )
-        for (button, inset) in [(home, 75.75), (switcher, 28.5)] {
+        // Centres and hover pills, measured off iPhone Mirroring's at 2x.
+        let placements: [(NSButton, x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat)] = [
+            (home, 75.75, 18.75, 38, 21), (switcher, 28.5, 19, 40.5, 24),
+        ]
+        for (button, x, y, width, height) in placements {
             content.addSubview(button)
             NSLayoutConstraint.activate([
-                button.centerXAnchor.constraint(equalTo: content.trailingAnchor, constant: -inset),
-                button.centerYAnchor.constraint(equalTo: content.topAnchor, constant: 18.75),
-                button.widthAnchor.constraint(equalToConstant: 28),
-                button.heightAnchor.constraint(equalToConstant: 28),
+                button.centerXAnchor.constraint(equalTo: content.trailingAnchor, constant: -x),
+                button.centerYAnchor.constraint(equalTo: content.topAnchor, constant: y),
+                button.widthAnchor.constraint(equalToConstant: width),
+                button.heightAnchor.constraint(equalToConstant: height),
             ])
         }
 
@@ -376,11 +382,14 @@ class VPhoneWindowController: NSObject {
     }
 
     private func makeChromeButton(_ label: String, image: NSImage?, action: Selector) -> NSButton {
-        let button = NSButton(image: image ?? NSImage(), target: self, action: action)
+        let button = VPhoneChromeButton(image: image ?? NSImage(), target: self, action: action)
         button.isBordered = false
         button.imagePosition = .imageOnly
         button.contentTintColor = NSColor(srgbGray: 0x9E)
         button.toolTip = label
+        button.wantsLayer = true
+        // The press look is VPhoneChromeButton's, not the cell's brightened glyph.
+        (button.cell as? NSButtonCell)?.highlightsBy = []
         button.setAccessibilityLabel(label)
         button.translatesAutoresizingMaskIntoConstraints = false
         // The guest view keeps first responder; it is what feeds the keyboard.
@@ -495,6 +504,51 @@ private final class VPhoneHoverStrip: NSView {
     override func mouseEntered(with _: NSEvent) { onHover?(true) }
     override func mouseExited(with _: NSEvent) { onHover?(false) }
     override func hitTest(_: NSPoint) -> NSView? { nil }
+}
+
+/// iPhone Mirroring's hover: a pill of white at 7.5% behind the glyph, which
+/// brightens from #9e to #e1. The pill is the button's own bounds. A press
+/// doubles the pill's white and leaves the glyph lit until the button lets go.
+private final class VPhoneChromeButton: NSButton {
+    // A symbol image gives the button alignment insets, and constraints size the
+    // alignment rect: the frame, and the pill with it, would stand taller than set.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+
+    /// Only this one is swapped on update: the tooltip rides on AppKit's own area.
+    private var area: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        area.map(removeTrackingArea)
+        let area = NSTrackingArea(
+            rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        self.area = area
+    }
+
+    override func layout() {
+        super.layout()
+        layer?.cornerRadius = bounds.height / 2
+    }
+
+    override func mouseEntered(with _: NSEvent) { hover(true) }
+    override func mouseExited(with _: NSEvent) { hover(false) }
+
+    /// `NSButton.mouseDown` tracks the press until the button is let go.
+    override func mouseDown(with event: NSEvent) {
+        layer?.backgroundColor = NSColor(white: 1, alpha: 0.15).cgColor
+        contentTintColor = NSColor(srgbGray: 0xE1)
+        super.mouseDown(with: event)
+        guard let window else { return }
+        hover(bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)))
+    }
+
+    private func hover(_ inside: Bool) {
+        layer?.backgroundColor = inside ? NSColor(white: 1, alpha: 0.075).cgColor : nil
+        contentTintColor = NSColor(srgbGray: inside ? 0xE1 : 0x9E)
+    }
 }
 
 private extension NSColor {
