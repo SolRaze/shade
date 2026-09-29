@@ -341,7 +341,7 @@ class VPhoneVirtualMachineWindowController: NSObject {
     /// it sits at alpha 0 until the pointer is over the 38 pt strip.
     ///
     /// The lights draw 14 pt with a ring only when the binary is stamped SDK 26+
-    /// (the Makefile's `vtool` step); otherwise AppKit draws legacy 12 pt ones.
+    /// (xcodebuild stamps the build SDK); otherwise AppKit draws legacy 12 pt ones.
     /// AppKit owns the titlebar's own lights' layout, so those stay hidden and
     /// free-standing ones sit on the measured centres.
     private func installHoverChrome(in window: NSWindow, over content: NSView) {
