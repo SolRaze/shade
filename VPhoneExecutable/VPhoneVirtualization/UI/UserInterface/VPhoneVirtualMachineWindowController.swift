@@ -58,6 +58,7 @@ class VPhoneVirtualMachineWindowController: NSObject {
         view.capturesSystemKeys = true
         view.keySender = keySender
         view.control = control
+        view.clipboardSync = VPhoneClipboardSync(control: control)
         virtualMachineView = view
         let vmView: NSView = view
 

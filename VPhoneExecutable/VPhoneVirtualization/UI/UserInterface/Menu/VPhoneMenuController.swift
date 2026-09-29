@@ -39,6 +39,7 @@ class VPhoneMenuController: NSObject {
     var settingsSetItem: NSMenuItem?
     var restartGuestItem: NSMenuItem?
     var panelMenuItems: [VPhoneGuestPanel: NSMenuItem] = [:]
+    var rotateMenuItems: [NSMenuItem] = []
     var touchIDMonitor: VPhoneTouchIDMonitor? {
         didSet { touchIDMonitor?.isEnabled = touchIDMenuItem?.state == .on }
     }
@@ -118,10 +119,12 @@ class VPhoneMenuController: NSObject {
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 
-        // Device hardware, then the guest data windows, then inspection.
+        // The phone, its simulated sensors, the guest's data and apps, then
+        // inspection and capture.
         mainMenu.addItem(buildDeviceMenu())
+        mainMenu.addItem(buildFeaturesMenu())
+        mainMenu.addItem(buildDataMenu())
         mainMenu.addItem(buildAppsMenu())
-        mainMenu.addItem(buildGuestMenu())
         mainMenu.addItem(buildDiagnosticsMenu())
         mainMenu.addItem(buildRecordMenu())
         mainMenu.addItem(buildViewMenu())

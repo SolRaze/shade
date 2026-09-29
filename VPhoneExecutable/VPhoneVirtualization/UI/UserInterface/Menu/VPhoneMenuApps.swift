@@ -47,6 +47,8 @@ extension VPhoneMenuController {
         installLC.isEnabled = false
         installLiveContainerItem = installLC
         menu.addItem(installLC)
+        menu.addItem(NSMenuItem.separator())
+        addBootstrapItems(to: menu)
 
         item.submenu = menu
         return item
