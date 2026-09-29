@@ -1,0 +1,111 @@
+#!/bin/zsh
+# vd - drive a running vphone guest through its vphone.sock
+#
+# Coordinates are points, the pixels of the compact screen image every action
+# returns; the socket takes device pixels, so they are multiplied by VD_SCALE.
+# Each action writes that image to VD_IMG and prints its path.
+#
+#   vd up | down | ping
+#   vd deploy                 build, install to /Applications, reboot a running guest
+#   vd tap X Y | swipe X1 Y1 X2 Y2 [MS] | key NAME | type TEXT
+#   vd shot [PATH]            full-resolution screenshot
+#   vd look                   compact image only, from the window's display
+#   vd ui [MAX]               accessibility tree of the front app
+#   vd front                  frontmost app
+#   vd open BUNDLE_ID|URL     launch an app or open a URL, then look
+#   vd rpc METHOD [JSON]      any vphoned method, prints its result
+#   vd raw JSON               one socket request, prints the reply
+#
+#   VD_VM     machine name, default v-deuce
+#   VD_SCALE  guest scale, default 3
+#   VD_IMG    compact image path, default /tmp/vd.jpg
+#   VD_DELAY  ms to let the screen settle before the image, default 250
+#   VD_NOSHOT set to skip the image after an action
+
+set -euo pipefail
+vm=${VD_VM:-v-deuce}
+sock=${VPHONE_LIBRARY_ROOT:-$HOME/.vphone/machines}/$vm/vphone.sock
+scale=${VD_SCALE:-3}
+img=${VD_IMG:-/tmp/vd.jpg}
+delay=${VD_DELAY:-250}
+
+send() (
+  [[ -S $sock ]] || { print -u2 "vd: no socket at $sock, run vd up"; exit 1 }
+  local reply
+  reply=$(print -r -- "$1" | nc -U "$sock") || { print -u2 "vd: $vm is not running, run vd up"; exit 1 }
+  [[ $(jq -r .ok <<<"$reply") == true ]] || { print -u2 "vd: $(jq -r '.error // .' <<<"$reply")"; exit 1 }
+  print -r -- "$reply"
+)
+
+act() {
+  local screen=true
+  [[ -n ${VD_NOSHOT:-} ]] && screen=false
+  local reply
+  reply=$(send "$(jq -c --argjson s $screen --argjson d $delay '. + {screen: $s, delay: $d}' <<<"$1")")
+  if [[ $screen == true ]]; then
+    jq -r '.image // empty' <<<"$reply" | base64 -d >"$img"
+    print -r -- "$img"
+  fi
+}
+
+px() { print $(( $1 * scale )) }
+
+cmd=${1:-}
+(( $# )) && shift
+case $cmd in
+  up)
+    if ! send '{"t":"ping"}' >/dev/null 2>&1; then
+      pgrep -f "/$vm/config.plist" >/dev/null ||
+        nohup vphone-cli vm launch "$vm" >"/tmp/vd-$vm.log" 2>&1 &!
+      for _ in {1..180}; do
+        send '{"t":"ping"}' >/dev/null 2>&1 && break
+        sleep 1
+      done
+      send '{"t":"ping"}' >/dev/null
+    fi
+    print "$vm up"
+    ;;
+  down) vphone-cli vm stop "$vm" ;;
+  deploy)
+    repo=${0:A:h}
+    xcodebuild -workspace "$repo/VPhone.xcworkspace" -scheme VPhone -configuration Debug \
+      -destination 'platform=macOS,arch=arm64' -derivedDataPath "$repo/.build/XcodeBundle" build -quiet
+    built=$repo/.build/XcodeBundle/Build/Products/Debug/VPhone.bundle
+    [[ -x $built/Contents/MacOS/vphone-vm ]] || { print -u2 "vd: no bundle at $built"; exit 1 }
+    running=$(pgrep -f "/$vm/config.plist" || true)
+    [[ -n $running ]] && vphone-cli vm stop "$vm"
+    rm -rf /Applications/VPhone.bundle
+    ditto "$built" /Applications/VPhone.bundle
+    print "installed $built"
+    [[ -n $running ]] && "$0" up
+    ;;
+  ping) send '{"t":"ping"}' >/dev/null && print ok ;;
+  tap) act "{\"t\":\"tap\",\"x\":$(px $1),\"y\":$(px $2)}" ;;
+  swipe) act "{\"t\":\"swipe\",\"x1\":$(px $1),\"y1\":$(px $2),\"x2\":$(px $3),\"y2\":$(px $4),\"ms\":${5:-300}}" ;;
+  key) act "$(jq -nc --arg n "$1" '{t:"key", name:$n}')" ;;
+  type)
+    reply=$(send "$(jq -nc --arg s "$1" --argjson d $delay \
+      '{t:"rpc", method:"input.type", params:{text:$s}, screen:true, delay:$d}')")
+    [[ -n ${VD_NOSHOT:-} ]] && exit 0
+    jq -r '.image // empty' <<<"$reply" | base64 -d >"$img"
+    print -r -- "$img"
+    ;;
+  look)
+    send '{"t":"rpc","method":"device.screen","screen":true,"delay":0}' | jq -r .image | base64 -d >"$img"
+    print -r -- "$img"
+    ;;
+  ui) send "$(jq -nc --argjson n "${1:-200}" '{t:"rpc", method:"ui.tree", params:{max_elements:$n}}')" | jq -c '.result' ;;
+  front) send '{"t":"rpc","method":"apps.foreground"}' | jq -c .result ;;
+  open)
+    if [[ $1 == *:* ]]; then m=apps.open_url k=url; else m=apps.launch k=bundle_id; fi
+    send "$(jq -nc --arg m $m --arg k $k --arg v "$1" '{t:"rpc", method:$m, params:{($k):$v}}')" >/dev/null
+    "$0" look
+    ;;
+  shot)
+    out=${1:-/tmp/vd-full.png}
+    send "$(jq -nc --arg p "$out" '{t:"screenshot", path:$p}')" | jq -r .path
+    ;;
+  rpc) send "$(jq -nc --arg m "$1" --argjson p "${2:-"{}"}" '{t:"rpc", method:$m, params:$p}')" | jq .result ;;
+  raw) send "$1" ;;
+  *) sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 2 ;;
+esac
