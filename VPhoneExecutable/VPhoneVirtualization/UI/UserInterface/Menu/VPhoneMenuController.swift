@@ -13,7 +13,6 @@ class VPhoneMenuController: NSObject {
     weak var windowController: VPhoneVirtualMachineWindowController?
     /// View-menu size items, keyed by the panel scale each one applies.
     var viewSizeItems: [CGFloat: NSMenuItem] = [:]
-    var installLiveContainerItem: NSMenuItem?
 
     var onFilesPressed: (() -> Void)?
     var onKeychainPressed: (() -> Void)?
@@ -87,7 +86,7 @@ class VPhoneMenuController: NSObject {
 
         // App menu
         let appMenuItem = NSMenuItem()
-        let appMenu = NSMenu(title: "vphone")
+        let appMenu = NSMenu(title: "v-deuce")
         let buildHash = Bundle.main.object(forInfoDictionaryKey: "VPhoneBuildHash") as? String
         let buildTitle = buildHash.flatMap { $0.isEmpty ? nil : $0 } ?? VPhoneLocalization.text("unknown")
         let buildItem = NSMenuItem(
@@ -96,23 +95,24 @@ class VPhoneMenuController: NSObject {
             keyEquivalent: "",
         )
         buildItem.isEnabled = false
+        buildItem.image = menuSymbol("info.circle")
         appMenu.addItem(buildItem)
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(
-            withTitle: "Quit vphone",
+            withTitle: "Quit v-deuce",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q",
-        )
+        ).image = menuSymbol("power")
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
         let editMenuItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x").image = menuSymbol("scissors")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c").image = menuSymbol("doc.on.doc")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v").image = menuSymbol("doc.on.clipboard")
         editMenu.addItem(NSMenuItem.separator())
-        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a").image = menuSymbol("selection.pin.in.out")
         editMenu.addItem(NSMenuItem.separator())
         let findItem = editMenu.addItem(
             withTitle: "Find…",
@@ -120,8 +120,10 @@ class VPhoneMenuController: NSObject {
             keyEquivalent: "f",
         )
         findItem.target = self
+        findItem.image = menuSymbol("magnifyingglass")
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
+        mainMenu.addItem(buildViewMenu())
 
         // The phone, its simulated sensors, the guest's data and apps, then
         // inspection and capture.
@@ -131,7 +133,6 @@ class VPhoneMenuController: NSObject {
         mainMenu.addItem(buildAppsMenu())
         mainMenu.addItem(buildDiagnosticsMenu())
         mainMenu.addItem(buildRecordMenu())
-        mainMenu.addItem(buildViewMenu())
 
         // Window menu — provides Cmd+W (close) and Cmd+M (minimize) for any key window
         let windowMenuItem = NSMenuItem()
@@ -140,18 +141,18 @@ class VPhoneMenuController: NSObject {
             withTitle: "Close",
             action: #selector(NSWindow.performClose(_:)),
             keyEquivalent: "w",
-        )
+        ).image = menuSymbol("xmark.square")
         windowMenu.addItem(
             withTitle: "Minimize",
             action: #selector(NSWindow.performMiniaturize(_:)),
             keyEquivalent: "m",
-        )
+        ).image = menuSymbol("minus.square")
         windowMenu.addItem(NSMenuItem.separator())
         windowMenu.addItem(
             withTitle: "Bring All to Front",
             action: #selector(NSApplication.arrangeInFront(_:)),
             keyEquivalent: "",
-        )
+        ).image = menuSymbol("macwindow.on.rectangle")
         windowMenuItem.submenu = windowMenu
         mainMenu.addItem(windowMenuItem)
         NSApp.windowsMenu = windowMenu
@@ -174,7 +175,7 @@ class VPhoneMenuController: NSObject {
         return item
     }
 
-    /// An SF Symbol for a menu item. Checkable items, value lists and status
+    /// An SF Symbol for a menu item. Checkable toggles, value lists and status
     /// rows have none, so the icons mark actions, windows and submenus.
     func menuSymbol(_ name: String) -> NSImage? {
         NSImage(systemSymbolName: name, accessibilityDescription: nil)

@@ -81,6 +81,8 @@ fi
 /bin/cp "$root/VPhoneExecutable/VPhoneVirtualization/Resources/patches_presets/"*.plist \
     "$resources/patches_presets/"
 
+/bin/cp "$root/VPhoneExecutable/VPhoneVirtualization/Resources/AppIcon.icns" "$resources/AppIcon.icns"
+
 "${0:a:h}/SyncStrings.sh"
 for catalog in Localizable InfoPlist; do
     /usr/bin/xcrun xcstringstool compile \

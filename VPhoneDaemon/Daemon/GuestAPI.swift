@@ -95,7 +95,6 @@ enum GuestAPI {
                 "files_app_drop",
                 "packages",
                 "environment_update",
-                "lc_install",
                 "udid_override",
                 "setup_skip",
             ],

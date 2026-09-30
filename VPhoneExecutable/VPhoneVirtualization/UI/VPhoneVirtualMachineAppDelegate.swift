@@ -27,6 +27,9 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         NSApp.setActivationPolicy(command.noGraphics ? .prohibited : .regular)
         VPhoneDockName.set(VPhoneDockName.name(forConfig: command.config))
+        // Launch Services draws a BNDL bundle with the generic plug-in icon
+        // whatever CFBundleIconFile names, so the Dock tile is set here.
+        NSApp.applicationIconImage = Bundle.main.image(forResource: "AppIcon")
 
         signal(SIGINT, SIG_IGN)
         let src = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
@@ -197,10 +200,7 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
             control.onConnect = { [weak self, weak mc, weak wc, weak provider = locationProvider] caps in
                 wc?.refreshTitle()
                 mc?.updateConnectAvailability(available: true)
-                mc?.updateInstallAvailability(
-                    available: caps.contains("ipa_install"),
-                    liveContainer: caps.contains("lc_install"),
-                )
+                mc?.updateInstallAvailability(available: caps.contains("ipa_install"))
                 mc?.updateBootstrapAvailability(available: caps.contains("bootstrap_install"))
                 mc?.updateBootstrapUninstallAvailability(available: caps.contains("bootstrap_uninstall"))
                 mc?.updateAppsAvailability(available: caps.contains("apps"))

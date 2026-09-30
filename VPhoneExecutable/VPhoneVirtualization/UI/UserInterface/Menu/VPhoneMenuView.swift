@@ -16,28 +16,34 @@ extension VPhoneMenuController {
     func buildViewMenu() -> NSMenuItem {
         let item = NSMenuItem()
         let menu = NSMenu(title: "View")
-        for (title, key, action) in [
-            ("Home Screen", "1", #selector(viewHomeScreen)),
-            ("App Switcher", "2", #selector(viewAppSwitcher)),
-            ("Spotlight", "3", #selector(viewSpotlight)),
+        for (title, key, symbol, action) in [
+            ("Home Screen", "1", "house", #selector(viewHomeScreen)),
+            ("App Switcher", "2", "square.stack", #selector(viewAppSwitcher)),
+            ("Spotlight", "3", "magnifyingglass", #selector(viewSpotlight)),
         ] {
-            let keyItem = makeItem(title, action: action)
+            let keyItem = makeItem(title, action: action, symbol: symbol)
             keyItem.keyEquivalent = key
             menu.addItem(keyItem)
         }
         menu.addItem(NSMenuItem.separator())
 
         viewSizeItems = [:]
-        for (title, key, scale, action) in [
-            ("Larger", "+", VPhoneMenuController.largerScale, #selector(viewLarger)),
-            ("Actual Size", "0", VPhoneMenuController.actualScale, #selector(viewActualSize)),
-            ("Smaller", "-", VPhoneMenuController.smallerScale, #selector(viewSmaller)),
+        for (title, key, symbol, scale, action) in [
+            ("Larger", "+", "plus.magnifyingglass", VPhoneMenuController.largerScale, #selector(viewLarger)),
+            ("Actual Size", "0", "1.magnifyingglass", VPhoneMenuController.actualScale, #selector(viewActualSize)),
+            ("Smaller", "-", "minus.magnifyingglass", VPhoneMenuController.smallerScale, #selector(viewSmaller)),
         ] {
-            let sizeItem = makeItem(title, action: action)
+            let sizeItem = makeItem(title, action: action, symbol: symbol)
             sizeItem.keyEquivalent = key
             viewSizeItems[scale] = sizeItem
             menu.addItem(sizeItem)
         }
+        // ⌘+ is ⌘⇧= on most layouts, so plain ⌘= also steps Larger, unlisted.
+        let largerEquals = makeItem("Larger", action: #selector(viewLarger))
+        largerEquals.keyEquivalent = "="
+        largerEquals.isHidden = true
+        largerEquals.allowsKeyEquivalentWhenHidden = true
+        menu.addItem(largerEquals)
         menu.delegate = self
         item.submenu = menu
         return item

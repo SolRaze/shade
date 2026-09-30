@@ -14,7 +14,6 @@ extension GuestAPI {
             executeAppDetail,
             executeFileTool,
             executeEnvironment,
-            executeLiveContainer,
             executeDeviceIdentity,
             executeSetupAssistant,
         ]

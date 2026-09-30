@@ -418,21 +418,6 @@ final class VPhoneGuestControl {
         return result["msg"] as? String ?? "Installed \(localURL.lastPathComponent)."
     }
 
-    /// Installs the IPA's app into LiveContainer's own app list instead of
-    /// SpringBoard, then relaunches LiveContainer so it rescans the list.
-    func installIntoLiveContainer(localURL: URL, liveContainerID: String = "com.kdt.livecontainer") async throws -> String {
-        guard guestCapabilities.contains("lc_install") else {
-            throw ControlError.unsupportedCapability("lc_install")
-        }
-        let data = try Data(contentsOf: localURL, options: .mappedIfSafe)
-        let path = "/var/mobile/Documents/vphone-installs/\(UUID().uuidString)-\(localURL.lastPathComponent)"
-        try await createDirectory(path: "/var/mobile/Documents/vphone-installs")
-        try await uploadFile(path: path, data: data)
-        let result = try await call("apps.lc_install", params: ["path": path, "bundle_id": liveContainerID])
-        _ = try? await appTerminate(bundleID: liveContainerID)
-        _ = try? await appLaunch(bundleID: liveContainerID)
-        return result["msg"] as? String ?? "Added \(localURL.lastPathComponent) to LiveContainer."
-    }
 
     /// Where the Files app shows a dropped file: On My iPhone › vphone-drop.
     static let dropFolder = "vphone-drop"

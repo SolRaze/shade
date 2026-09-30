@@ -38,15 +38,6 @@ extension VPhoneMenuController {
         install.isEnabled = false
         installPackageItem = install
         menu.addItem(install)
-
-        let installLC = makeItem(
-            "Install IPA into LiveContainer…",
-            action: #selector(installIPAIntoLiveContainer),
-            symbol: "shippingbox",
-        )
-        installLC.isEnabled = false
-        installLiveContainerItem = installLC
-        menu.addItem(installLC)
         menu.addItem(NSMenuItem.separator())
         addBootstrapItems(to: menu)
 
@@ -62,9 +53,8 @@ extension VPhoneMenuController {
         appsOpenURLItem?.isEnabled = available
     }
 
-    func updateInstallAvailability(available: Bool, liveContainer: Bool = false) {
+    func updateInstallAvailability(available: Bool) {
         installPackageItem?.isEnabled = available
-        installLiveContainerItem?.isEnabled = liveContainer
     }
 
     @objc func openAppBrowser() {
@@ -73,20 +63,6 @@ extension VPhoneMenuController {
 
     @objc func installIPAFromDisk() {
         chooseInstallPackage { [weak self] url in self?.installIPA(from: url) }
-    }
-
-    @objc func installIPAIntoLiveContainer() {
-        chooseInstallPackage { [weak self] url in
-            guard let self else { return }
-            Task {
-                do {
-                    let result = try await self.control.installIntoLiveContainer(localURL: url)
-                    VPhoneAlert.present(title: "Install into LiveContainer", message: result, style: .informational)
-                } catch {
-                    VPhoneAlert.present(title: "Install into LiveContainer", message: "\(error)", style: .warning)
-                }
-            }
-        }
     }
 
     private func chooseInstallPackage(_ install: @escaping (URL) -> Void) {

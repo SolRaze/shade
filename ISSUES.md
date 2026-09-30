@@ -3,11 +3,11 @@ issues
 open work and known limits | v-deuce app layer only | firmware pipeline tracked upstream
 
 2.x port
-builds | `VPhoneCoreKitTests` pass | unverified on a `schemaVersion=2` VM
+builds | `VPhoneCoreKitTests` pass | runs `v-deuce`, `schemaVersion=2`, iOS 26.1
 
 devicetree
 Siri `/product` flags unported | spec in `Research/0_binary_patch_comparison.md`
-display DT | upstream DeviceTree patcher sets `artwork-device-subtype` 2556 and `island-notch-location` 144
+display DT | upstream post-restore patcher sets iPhone17,3 D47, 2556 subtype, island at 144 | `./display` rewrites an installed VM through `vphone-cli cfw patch-display-dt`
 
 hover chrome
 iPhone Mirroring's top strip | close, minimize, zoom disabled at left | Home Screen and App Switcher at right | fades in on pointer over the 38 pt strip, out otherwise
@@ -59,12 +59,6 @@ second guest tiles beside the first instead of landing on top of it | each `vm l
 `VPhoneWindowTiling.origin` takes right of the occupied band, then left, then centre | `CGWindowListCopyWindowInfo` locates the other processes' windows, no Accessibility permission
 inert under a tiling WM that owns placement | aerospace pins this window from `mirror-pin.sh` and its `on-window-detected` rule runs after the app has placed itself
 unverified with two guests booted | geometry covered by `WindowTilingTests`
-
-livecontainer
-installed | `com.kdt.livecontainer` | `com.kdt.LiveContainer2` | `com.kdt.LiveContainer3` | no apps inside
-JIT-less cert loaded in all three | runs normal apps | TXM kills code that rewrites its own `__TEXT`
-open: LiveContainer install from the vphone pill
-Apps > Install IPA into LiveContainer | vphoned `apps.lc_install` in `GuestAPI+LiveContainer.swift` unpacks into `com.kdt.livecontainer` Documents/Applications, relaunches LC | LC signs on first run | unverified on the guest
 
 done and verified
 raw key forwarding | keyDown/keyUp/flagsChanged straight to the guest keyboard, shift and Cmd chords intact

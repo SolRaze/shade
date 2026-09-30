@@ -11,10 +11,11 @@ added here
 - window | 406x890 around a 390x844 panel, 48 pt continuous corners, size locked
 - hover chrome | 38 pt top strip | free-standing 14 pt traffic lights | Home Screen and App Switcher buttons | 0.2 s fade
 - keys | raw keyDown/keyUp/flagsChanged to the guest keyboard | ⌘1 ⌘H home | ⌘2 app switcher | ⌘3 spotlight
-- view | Larger, Actual Size, Smaller | 1, 0.706, 0.474 panel scale
+- view | Larger, Actual Size, Smaller | 1, 0.706, 0.474 panel scale | ⌘+ or ⌘= | ⌘0 | ⌘-
+- app | named v-deuce | `AppIcon.icns` set as the Dock tile at launch | View menu beside Edit | SF Symbol on every action item
+- display | `./display <vm> --e` | 1170x2532 panel, notch, iPhone14,5 D17 identity | VM off, root for the Preboot mount | `--restore` puts the original DT back
 - gestures | right-click is touch-and-hold | pinch and rotate on one finger pair | scroll wheel drives one finger | mouse back and forward swipe from the edges
 - clipboard | host to guest on activate | guest to host on resign | newer host clipboard wins
-- LiveContainer | Apps > Install IPA into LiveContainer | vphoned `apps.lc_install` unpacks into `com.kdt.livecontainer`
 - window tiling | a second guest opens beside the first
 - file browser | filter field takes an absolute path and jumps to it
 
@@ -47,14 +48,16 @@ docs map
 
 state
 hover chrome matches iPhone Mirroring to about 1 px | light ring #6b against #67, drawn by AppKit
-2.x port builds and passes tests | unverified on a live `schemaVersion=2` VM
+2.x port runs `v-deuce` | `schemaVersion=2` | iOS 26.1 23B85
 Siri DeviceTree flags unported to the Swift patcher
 
 gotchas
 buttons, gestures and clipboard need vphoned connected
 guest touch injection only below iOS 26 | iOS 26 takes VZ multitouch
 tweaked IPAs that hook `__TEXT` die under the code signing monitor | not a signing fault
-LiveContainer must launch once before an install | its data container does not exist until then
+SpringBoard draws the island from the DT model identity, not the display properties | `display --e` retargets to iPhone14,5
+MobileGestalt caches the identity | move `systemgroup.com.apple.mobilegestaltcache/Library/Caches/com.apple.MobileGestalt.plist` aside and reboot after a retarget
+Launch Services draws a `BNDL` with the generic plug-in icon | Finder and `NSRunningApplication.icon` show it | the Dock tile is set in code
 Japan or EU region at setup blocks system apps | pick United States
 nested Mac VM cannot host | PV=3 needs bare metal
 upstream is remote `origin` | pull, never reset | own remote `sol`, branch `deuce`
