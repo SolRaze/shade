@@ -11,7 +11,7 @@ added here
 - window | 406x890 around a 390x844 panel, 48 pt continuous corners, size locked
 - hover chrome | 38 pt top strip | free-standing 14 pt traffic lights | Home Screen and App Switcher buttons | 0.2 s fade
 - keys | raw keyDown/keyUp/flagsChanged to the guest keyboard | ⌘1 ⌘H home | ⌘2 app switcher | ⌘3 spotlight
-- view | Larger, Actual Size, Smaller | 1, 0.706, 0.474 panel scale | ⌘+ or ⌘= | ⌘0 | ⌘-
+- view | Larger, Actual Size, Smaller | 390x844, 300x650, 196x425 panel as iPhone Mirroring | ⌘+ or ⌘= | ⌘0 | ⌘-
 - app | named v-deuce | `AppIcon.icns` set as the Dock tile at launch | View menu beside Edit | SF Symbol on every action item
 - display | `./display <vm> --e` | 1170x2532 panel, notch, iPhone14,5 D17 identity | VM off, root for the Preboot mount | `--restore` puts the original DT back
 - gestures | right-click is touch-and-hold | pinch and rotate on one finger pair | scroll wheel drives one finger | mouse back and forward swipe from the edges

@@ -8,7 +8,8 @@ extension VPhoneMenuController {
     /// one at a time, ⌘0 straight to Actual Size. The sizes are fixed, not a
     /// continuous zoom: Larger draws the guest panel 1:1, Actual Size and
     /// Smaller match iPhone Mirroring's own two smaller windows, 316x696 and
-    /// 212x471 with chrome, as a fraction of this guest's panel.
+    /// 212x471 with chrome around a 300x650 and 196x425 panel, taken per axis
+    /// as a fraction of this guest's panel.
     /// applyPanelSize shrinks any of them to fit the screen the window is on.
     ///
     /// The VM view offers every Cmd chord to the main menu before forwarding
@@ -51,9 +52,20 @@ extension VPhoneMenuController {
 
     // MARK: - Sizes
 
-    static let smallerScale: CGFloat = 0.474
-    static let actualScale: CGFloat = 0.706
+    /// Width fractions of the 390 pt panel, which also key the size items.
+    static let smallerScale: CGFloat = 196 / 390
+    static let actualScale: CGFloat = 300 / 390
     static let largerScale: CGFloat = 1
+
+    /// iPhone Mirroring's panel is not a uniform scale of 390x844: height runs
+    /// its own fraction, so 196x425 and 300x650 come out whole.
+    static func heightScale(for widthScale: CGFloat) -> CGFloat {
+        switch widthScale {
+        case smallerScale: 425 / 844
+        case actualScale: 650 / 844
+        default: widthScale
+        }
+    }
 
     /// Smallest first, so Larger and Smaller are a step along this list.
     static let sizeScales: [CGFloat] = [smallerScale, actualScale, largerScale]

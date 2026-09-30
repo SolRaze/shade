@@ -28,7 +28,7 @@ class VPhoneVirtualMachineWindowController: NSObject {
     private var screenObserver: NSObjectProtocol?
     private weak var chromeBacking: VPhoneChromeBacking?
     // The guest panel at its own point size, the View menu's Larger. Every
-    // other View size is this multiplied by panelScale.
+    // other View size is this scaled by panelScale across and heightScale(for:) down.
     private var basePanelSize: NSSize = .zero
     private var panelScale: CGFloat = 1
     private var menuKeyMonitor: Any?
@@ -311,7 +311,8 @@ class VPhoneVirtualMachineWindowController: NSObject {
     /// setContentSize takes.
     private func applyPanelSize(to window: NSWindow, panel: NSView) {
         var panelSize = NSSize(
-            width: basePanelSize.width * panelScale, height: basePanelSize.height * panelScale
+            width: (basePanelSize.width * panelScale).rounded(),
+            height: (basePanelSize.height * VPhoneMenuController.heightScale(for: panelScale)).rounded()
         )
         if let visible = window.screen?.visibleFrame.size {
             let fit = min(
