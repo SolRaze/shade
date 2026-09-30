@@ -1,0 +1,94 @@
+#!/bin/zsh
+# display - set an installed VM's handset display offline
+#
+#   display <vm> [--subtype N] [--drop-notch | --notch N] [--identity MODEL:TARGET] [--dry-run]
+#   display <vm> --restore
+#   display <vm> --e     iPhone 13 panel | 1170x2532, notch, iPhone14,5 D17
+#
+# Patches devicetree.img4 on the guest's Preboot volume through
+# `vphone-cli cfw patch-display-dt`, and sets screenConfig in the VM's
+# config.plist to the panel --subtype names. SpringBoard lays out its status
+# bar and home indicator from the device tree; the host window sizes itself
+# from screenConfig; the two must agree.
+# The first run keeps devicetree.img4.orig beside the file; --restore puts it
+# back. The VM must be off. Needs root for the mount.
+
+set -euo pipefail
+root=${VPHONE_LIBRARY_ROOT:-$HOME/.vphone/machines}
+vm=${1:?usage: display <vm> [--subtype N] [--drop-notch | --notch N] [--dry-run] [--restore] [--e]}
+shift
+dir=$root/$vm
+img=$dir/Disk.img
+cfg=$dir/config.plist
+[[ -f $img && -f $cfg ]] || { print -u2 "display: no VM at $dir"; exit 1 }
+
+restore=0 dry=0 subtype=""
+args=()
+while (( $# )); do
+  case $1 in
+    --restore) restore=1 ;;
+    --dry-run) dry=1; args+=(--dry-run) ;;
+    --subtype) subtype=$2; args+=(--subtype $2); shift ;;
+    --notch) args+=(--notch $2); shift ;;
+    --drop-notch) args+=(--drop-notch) ;;
+    --identity) args+=(--identity $2); shift ;;
+    --e) subtype=2532; args+=(--subtype 2532 --drop-notch --identity iPhone14,5:D17) ;;
+    *) print -u2 "display: unknown option $1"; exit 2 ;;
+  esac
+  shift
+done
+
+# Panel width for each artwork-device-subtype, all scale 3 at 460 ppi.
+typeset -A widths=(2532 1170 2556 1179 2622 1206 2796 1290 2868 1320)
+if [[ -n $subtype && -z ${widths[$subtype]:-} ]]; then
+  print -u2 "display: no panel width known for subtype $subtype"; exit 1
+fi
+
+lsof "$img" >/dev/null 2>&1 && { print -u2 "display: $img is in use, stop the VM first"; exit 1 }
+
+attached=$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "$img")
+base=$(awk 'NR == 1 { print $1; exit }' <<<"$attached")
+mnt=$(mktemp -d /tmp/vphone-display.XXXXXX)
+cleanup() {
+  sudo umount "$mnt" 2>/dev/null || true
+  hdiutil detach "$base" >/dev/null 2>&1 || hdiutil detach -force "$base" >/dev/null 2>&1 || true
+  rmdir "$mnt" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# The Preboot volume holds <boot-manifest-hash>/usr/standalone/firmware, which iBoot loads.
+preboot=$(diskutil apfs list -plist | plutil -convert json -o - - |
+  jq -r --arg d "${base#/dev/}s" '.Containers[]
+    | select(any(.PhysicalStores[]; .DeviceIdentifier | startswith($d)))
+    | .Volumes[] | select(.Roles | index("Preboot")) | .DeviceIdentifier' | head -1)
+[[ -n $preboot ]] || { print -u2 "display: no Preboot volume in $img"; exit 1 }
+sudo mount_apfs -o nobrowse "/dev/$preboot" "$mnt"
+
+dts=("$mnt"/*/usr/standalone/firmware/devicetree.img4(N))
+(( ${#dts} == 1 )) || { print -u2 "display: expected one devicetree.img4 on Preboot, found ${#dts}"; exit 1 }
+dt=${dts[1]}
+
+if (( restore )); then
+  [[ -f $dt.orig ]] || { print -u2 "display: no $dt.orig to restore"; exit 1 }
+  sudo cp "$dt.orig" "$dt"
+  print "restored original devicetree.img4 | screenConfig left as is"
+  exit 0
+fi
+(( ${#args} )) || { print -u2 "display: nothing to change"; exit 2 }
+
+local_dt=$mnt.img4
+cp "$dt" "$local_dt"
+vphone-cli cfw patch-display-dt "$local_dt" "${args[@]}"
+if (( dry )); then rm -f "$local_dt"; exit 0; fi
+[[ -f $dt.orig ]] || sudo cp -p "$dt" "$dt.orig"
+sudo cp "$local_dt" "$dt"
+sudo chown 0:0 "$dt"
+sudo chmod 0644 "$dt"
+rm -f "$local_dt"
+print "devicetree.img4 rewritten"
+
+if [[ -n $subtype ]]; then
+  plutil -replace screenConfig.width -integer "${widths[$subtype]}" "$cfg"
+  plutil -replace screenConfig.height -integer "$subtype" "$cfg"
+  print "screenConfig ${widths[$subtype]}x$subtype"
+fi

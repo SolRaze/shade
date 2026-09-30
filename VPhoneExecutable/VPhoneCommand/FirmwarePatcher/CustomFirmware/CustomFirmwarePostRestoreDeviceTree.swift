@@ -72,6 +72,7 @@ public enum CustomFirmwarePostRestoreDeviceTree {
         at url: URL,
         dryRun: Bool = false,
         verbose: Bool = true,
+        transform: (Data) throws -> (Data, [Change]) = patchedDeviceTree,
     ) throws -> Outcome {
         let data: Data
         do {
@@ -112,7 +113,7 @@ public enum CustomFirmwarePostRestoreDeviceTree {
             print("  [.] DT blob: \(blob.count) bytes")
         }
 
-        let (newBlob, changes) = try patchedDeviceTree(blob)
+        let (newBlob, changes) = try transform(blob)
         guard !changes.isEmpty else {
             if verbose {
                 print("  [.] \(url.path): DT already in target state — no change")
@@ -218,6 +219,97 @@ public enum CustomFirmwarePostRestoreDeviceTree {
                 after: "[D47AP, VPHONE600AP, AppleVirtualPlatformARM]",
             ))
             compatible.value = newCompatible
+        }
+
+        guard !changes.isEmpty else { return (blob, []) }
+        return (serializeNode(root), changes)
+    }
+
+    // MARK: - Display identity
+
+    /// The name `island-notch-location` is renamed to when the island is
+    /// dropped. Property names sit in fixed 32-byte slots, so a rename keeps
+    /// the blob's size where a deletion could not.
+    static let droppedNotchName = "island-notch-location-off"
+
+    /// Rewrite the `/product` properties SpringBoard picks its handset artwork
+    /// from. `artwork-device-subtype` is the panel height in pixels.
+    /// `dropNotch` hides `island-notch-location` from by-name lookups, which
+    /// helps SpringBoard draw a notch handset; `notch` sets its value instead.
+    /// SpringBoard takes island or notch from the model, so a notch handset
+    /// also needs `identity`, a model and target type such as iPhone17,5 and
+    /// D49, written to `model`, `target-type` and the first `compatible`
+    /// entry. Idempotent.
+    public static func displayPatchedDeviceTree(
+        _ blob: Data,
+        subtype: Int?,
+        notch: Int?,
+        dropNotch: Bool,
+        identity: (model: String, targetType: String)? = nil,
+    ) throws -> (Data, [Change]) {
+        let (root, end) = try parseNode(blob, at: 0)
+        guard end == blob.count, nodeName(root) == "device-tree" else {
+            throw PatcherError.invalidFormat("not a flat device tree")
+        }
+        guard let product = root.children.first(where: { nodeName($0) == "product" }) else {
+            throw PatcherError.patchSiteNotFound("no 'product' node in device tree")
+        }
+
+        var changes: [Change] = []
+        func setInteger(_ name: String, _ value: Int) throws {
+            let prop = try property(product, named: name)
+            var raw = Data(count: prop.length)
+            for i in 0 ..< min(prop.length, 8) {
+                raw[i] = UInt8(truncatingIfNeeded: value >> (8 * i))
+            }
+            guard prop.value != raw else { return }
+            let before = prop.value.prefix(8).enumerated().reduce(0) { $0 | Int($1.element) << (8 * $1.offset) }
+            changes.append(Change(property: name, before: "\(before)", after: "\(value)"))
+            prop.value = raw
+        }
+
+        if let identity {
+            let model = try property(root, named: "model")
+            let newModel = encodeFixedString(identity.model, length: model.length)
+            if model.value != newModel {
+                changes.append(Change(property: "model", before: cString(model.value), after: identity.model))
+                model.value = newModel
+            }
+            let targetType = try property(root, named: "target-type")
+            let newTargetType = encodeFixedString(identity.targetType, length: targetType.length)
+            if targetType.value != newTargetType {
+                changes.append(Change(
+                    property: "target-type", before: cString(targetType.value), after: identity.targetType,
+                ))
+                targetType.value = newTargetType
+            }
+            let compatible = try property(root, named: "compatible")
+            var body = Data("\(identity.targetType)AP\0VPHONE600AP\0AppleVirtualPlatformARM\0".utf8)
+            guard body.count <= compatible.length else {
+                throw PatcherError.invalidFormat("compatible body \(body.count)B > slot \(compatible.length)B")
+            }
+            body.append(contentsOf: [UInt8](repeating: 0, count: compatible.length - body.count))
+            if compatible.value != body {
+                changes.append(Change(
+                    property: "compatible",
+                    before: "[\(cStringList(compatible.value).joined(separator: ", "))]",
+                    after: "[\(identity.targetType)AP, VPHONE600AP, AppleVirtualPlatformARM]",
+                ))
+                compatible.value = body
+            }
+        }
+        if let subtype { try setInteger("artwork-device-subtype", subtype) }
+        if dropNotch {
+            if let prop = product.properties.first(where: { $0.name == "island-notch-location" }) {
+                prop.name = droppedNotchName
+                changes.append(Change(property: "island-notch-location", before: "present", after: droppedNotchName))
+            }
+        } else if let notch {
+            if let prop = product.properties.first(where: { $0.name == droppedNotchName }) {
+                prop.name = "island-notch-location"
+                changes.append(Change(property: droppedNotchName, before: "renamed", after: "island-notch-location"))
+            }
+            try setInteger("island-notch-location", notch)
         }
 
         guard !changes.isEmpty else { return (blob, []) }

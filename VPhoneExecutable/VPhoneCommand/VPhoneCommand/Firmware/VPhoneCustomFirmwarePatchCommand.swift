@@ -278,3 +278,66 @@ struct VPhoneCustomFirmwarePatchPostRestoreDeviceTreeCommand: ParsableCommand {
         try CustomFirmwarePostRestoreDeviceTree.patch(at: deviceTree, dryRun: dryRun, verbose: true)
     }
 }
+
+// MARK: - patch-display-dt
+
+struct VPhoneCustomFirmwarePatchDisplayDeviceTreeCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "patch-display-dt",
+        abstract: "Rewrite the handset artwork a devicetree.img4 selects",
+        discussion: """
+        Sets /product artwork-device-subtype, the panel height in pixels that
+        SpringBoard keys its status bar and home indicator layout off, and
+        either sets island-notch-location or, with --drop-notch, renames it out
+        of lookup so the guest draws a notch handset without the Dynamic
+        Island. SpringBoard takes island or notch from the model, so a notch
+        handset also needs --identity, such as iPhone17,5:D49 for the 16e. The
+        VM's screenConfig must match the subtype.
+
+        Same container handling as patch-post-restore-dt: sizes are fixed, the
+        manifest and compression are kept.
+        """,
+    )
+
+    @Argument(help: "Path to devicetree.img4 or devicetree.im4p", transform: URL.init(fileURLWithPath:))
+    var deviceTree: URL
+
+    @Option(help: "artwork-device-subtype, the panel height in pixels")
+    var subtype: Int?
+
+    @Option(help: "island-notch-location value; restores a dropped property")
+    var notch: Int?
+
+    @Flag(name: .customLong("drop-notch"), help: "Hide island-notch-location from the guest")
+    var dropNotch = false
+
+    @Option(help: "Model and target type as MODEL:TARGET, such as iPhone17,5:D49")
+    var identity: String?
+
+    @Flag(name: .customLong("dry-run"), help: "Report what would change and exit")
+    var dryRun = false
+
+    func validate() throws {
+        guard subtype != nil || notch != nil || dropNotch || identity != nil else {
+            throw ValidationError("Pass --subtype, --notch, --drop-notch or --identity.")
+        }
+        if let identity, identity.split(separator: ":").count != 2 {
+            throw ValidationError("--identity takes MODEL:TARGET, such as iPhone17,5:D49.")
+        }
+        guard !(dropNotch && notch != nil) else {
+            throw ValidationError("--drop-notch and --notch are exclusive.")
+        }
+    }
+
+    func run() throws {
+        try CustomFirmwarePostRestoreDeviceTree.patch(at: deviceTree, dryRun: dryRun, verbose: true) {
+            try CustomFirmwarePostRestoreDeviceTree.displayPatchedDeviceTree(
+                $0, subtype: subtype, notch: notch, dropNotch: dropNotch,
+                identity: identity.map { id in
+                    let parts = id.split(separator: ":").map(String.init)
+                    return (parts[0], parts[1])
+                },
+            )
+        }
+    }
+}
