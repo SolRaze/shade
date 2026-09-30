@@ -328,6 +328,9 @@ class VPhoneVirtualMachineWindowController: NSObject {
         window.minSize = contentSize
         window.maxSize = contentSize
         window.setContentSize(contentSize)
+        // Autoresizing leaves the VZ view at its old size on a shrink, so the
+        // panel is placed outright, 8 pt in from the left and bottom.
+        panel.frame = NSRect(origin: NSPoint(x: 8, y: 8), size: panelSize)
         cornerRadiusFraction = 48 / panelSize.width
         applyCornerRadius(to: panel)
     }
