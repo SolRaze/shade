@@ -19,7 +19,8 @@ class VPhoneVirtualMachineWindowController: NSObject {
     private var lastGuestClipboardChange = 0
     // Handset corner radius as a fraction of panel width, so a resized window
     // keeps the shape. 48 pt on a 390 pt-wide panel, .continuous, fitted to
-    // the iPhone Mirroring window: both bodies are 780x1688 px at 2x.
+    // the iPhone Mirroring window at all three View sizes: its corners scale
+    // with the panel, near 48, 36 and 24 pt.
     // Verify by capturing both windows unhovered with `screencapture -l <id>`
     // and comparing the per-row alpha edge down each corner — the alpha
     // channel gives the shape, luminance does not (the guest's own wallpaper
@@ -332,7 +333,6 @@ class VPhoneVirtualMachineWindowController: NSObject {
         // Autoresizing leaves the VZ view at its old size on a shrink, so the
         // panel is placed outright, 8 pt in from the left and bottom.
         panel.frame = NSRect(origin: NSPoint(x: 8, y: 8), size: panelSize)
-        cornerRadiusFraction = 48 / panelSize.width
         applyCornerRadius(to: panel)
     }
 
