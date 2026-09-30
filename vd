@@ -74,9 +74,12 @@ case $cmd in
     [[ -x $built/Contents/MacOS/vphone-vm ]] || { print -u2 "vd: no bundle at $built"; exit 1 }
     running=$(pgrep -f "/$vm/config.plist" || true)
     [[ -n $running ]] && vphone-cli vm stop "$vm"
-    rm -rf /Applications/VPhone.bundle
-    ditto "$built" /Applications/VPhone.bundle
-    print "installed $built"
+    # The target builds VPhone.bundle; it installs as v-deuce.bundle, and
+    # vphone-cli on PATH is a link into it.
+    rm -rf /Applications/VPhone.bundle /Applications/v-deuce.bundle
+    ditto "$built" /Applications/v-deuce.bundle
+    ln -sf /Applications/v-deuce.bundle/Contents/MacOS/vphone-cli "$(brew --prefix)/bin/vphone-cli"
+    print "installed $built as /Applications/v-deuce.bundle"
     [[ -n $running ]] && "$0" up
     ;;
   ping) send '{"t":"ping"}' >/dev/null && print ok ;;

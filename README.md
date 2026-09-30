@@ -5,7 +5,7 @@ virtual iPhone on Apple Silicon | fork of vphone-cli 2.x | iPhone Mirroring wind
 what it is
 - vphone-cli 2.x firmware patcher, restore and VM control, kept in step with upstream https://github.com/Lakr233/vphone-cli
 - app layer rebuilt to look and act like iPhone Mirroring | window, chrome, input, clipboard, installs
-- one `VPhone.bundle` | `vphone-cli` drives firmware and VMs | `vphone-vm` runs the guest window | `vphoned` inside the guest
+- one bundle, built as `VPhone.bundle`, installed and released as `v-deuce.bundle` | `vphone-cli` drives firmware and VMs | `vphone-vm` runs the guest window | `vphoned` inside the guest
 
 added here
 - window | 406x890 around a 390x844 panel, 48 pt continuous corners, size locked
@@ -34,7 +34,7 @@ API | `--api-listen 127.0.0.1:8765` | bearer token printed as `[api] token: …`
 automation
 `./vd` | shell client of `<VM>/vphone.sock` | coordinates in points, each action writes a 430x932 screen to `/tmp/vd.jpg`
 `vd up` `down` `deploy` | `tap` `swipe` `key` `type` `look` | `ui` `front` `open` | `rpc` any vphoned method | `vd` alone prints usage
-`vd deploy` builds, replaces `/Applications/VPhone.bundle` and reboots a running guest
+`vd deploy` builds, replaces `/Applications/v-deuce.bundle`, links `vphone-cli` into it, reboots a running guest
 
 host
 Apple Silicon | macOS 15+ | Xcode for source builds
