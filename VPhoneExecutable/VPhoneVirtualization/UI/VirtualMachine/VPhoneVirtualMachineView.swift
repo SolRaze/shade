@@ -8,6 +8,14 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
     var keySender: VPhoneVirtualMachineKeySender?
     weak var control: VPhoneGuestControl?
 
+    /// Whether trackpad scroll and pinch become guest touches.
+    var trackpadGesturesEnabled = VPhoneTrackpadGestures.isEnabled {
+        didSet {
+            guard !trackpadGesturesEnabled else { return }
+            cancelActiveTouches()
+        }
+    }
+
     private var currentTouchSwipeAim: Int = 0
     /// Where the pressed mouse last was, nil when no button is down. Only set so
     /// an interrupted drag can be lifted.
@@ -219,6 +227,10 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
     /// Momentum events are dropped: the guest derives its own deceleration from
     /// the drag it saw, so replaying the host's would compound it.
     override func scrollWheel(with event: NSEvent) {
+        guard trackpadGesturesEnabled else {
+            super.scrollWheel(with: event)
+            return
+        }
         guard event.momentumPhase.isEmpty else { return }
 
         // Precise deltas are already points; a notched wheel reports lines.
@@ -269,6 +281,7 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
     /// Advances the two-finger pair a pinch or rotate event describes. Returns
     /// false when the guest could not take it.
     private func updatePinch(with event: NSEvent, scale: CGFloat, radians: CGFloat) -> Bool {
+        guard trackpadGesturesEnabled || pinch != nil else { return false }
         switch event.phase {
         case .began:
             let gesture = VPhoneTwoFingerGesture(
@@ -319,6 +332,25 @@ class VPhoneVirtualMachineView: VZVirtualMachineView {
         guard let point = scrollPoint else { return }
         scrollPoint = nil
         sendTouchEvent(phase: phase, localPoint: point, timestamp: ProcessInfo.processInfo.systemUptime)
+    }
+
+    /// The system back gesture: a drag that begins in the left screen-edge zone.
+    /// A second call while one is in flight is dropped, so a double press does
+    /// not stack two swipes.
+    private var backGestureInFlight = false
+
+    func performBackGesture() {
+        let w = Double(bounds.width)
+        let h = Double(bounds.height)
+        guard !backGestureInFlight, w > 0, h > 0 else { return }
+        backGestureInFlight = true
+        let durationMs = 250
+        // injectSwipe queues its steps on the main queue, so this clears after the last one.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(durationMs) / 1000 + 0.05) { [weak self] in
+            self?.backGestureInFlight = false
+        }
+        injectSwipe(fromX: 2, fromY: h / 2, toX: w * 0.85, toY: h / 2,
+                    screenWidth: Int(w), screenHeight: Int(h), durationMs: durationMs)
     }
 
     /// Lifts everything the guest still believes is on the screen.
@@ -727,5 +759,14 @@ extension VPhoneVirtualMachineView: NSMenuItemValidation {
         default:
             true
         }
+    }
+}
+
+enum VPhoneTrackpadGestures {
+    private static let disabledKey = "trackpadGesturesDisabled"
+
+    static var isEnabled: Bool {
+        get { !UserDefaults.standard.bool(forKey: disabledKey) }
+        set { UserDefaults.standard.set(!newValue, forKey: disabledKey) }
     }
 }

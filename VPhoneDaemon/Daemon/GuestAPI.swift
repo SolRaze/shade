@@ -61,8 +61,10 @@ enum GuestAPI {
             "binary_hash": binaryHash,
             "ios": "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
             "ip": ip ?? "",
+            "setup_pending": setupAssistantPending(),
             "capabilities": [
                 "touch",
+                "touch2",
                 "hid",
                 "apps",
                 "url",
@@ -70,6 +72,7 @@ enum GuestAPI {
                 "clipboard",
                 "location",
                 "keychain",
+                "keychain_edit",
                 "ipa_install",
                 "bootstrap_install",
                 "bootstrap_uninstall",
@@ -93,6 +96,8 @@ enum GuestAPI {
                 "packages",
                 "environment_update",
                 "lc_install",
+                "udid_override",
+                "setup_skip",
             ],
         ]
     }
@@ -254,6 +259,25 @@ enum GuestAPI {
                 phase, x: number(params, "x"), y: number(params, "y"),
                 normalized: params["normalized"] as? Bool ?? true,
             )
+        case "input.touch2":
+            // Two fingers in one hand event. icli's `input.touch` carries a
+            // single digitizer point, so a pinch has to go through vphoned's own
+            // injection path (`vp_hid_touch2`) instead.
+            guard let phase = (params["phase"] as? String).flatMap(TouchPhase.init(rawValue:)) else {
+                throw GuestAPIError.invalidRequest("phase must be down, move or up")
+            }
+            // `vp_hid_touch2` takes normalized coordinates only. `input.touch`
+            // also accepts screen points, so refuse the flag here rather than
+            // read points as fractions and put both fingers in the corner.
+            guard params["normalized"] as? Bool ?? true else {
+                throw GuestAPIError.invalidRequest("touch2 coordinates are normalized 0..1 only")
+            }
+            vp_hid_touch2(
+                touchPhaseCode(phase),
+                number(params, "x1"), number(params, "y1"),
+                number(params, "x2"), number(params, "y2"),
+            )
+            return ["phase": phase.rawValue, "fingers": 2]
         case "input.hid":
             let page = try integer(params, "page")
             let usage = try integer(params, "usage")
@@ -337,11 +361,12 @@ enum GuestAPI {
                 service: string(params, "service"),
                 password: string(params, "password"),
             )
+        case "keychain.get":
+            return try GuestKeychain.get(GuestKeychain.Identity(params))
+        case "keychain.update":
+            return try GuestKeychain.update(GuestKeychain.Identity(params), value: string(params, "value"))
         case "keychain.delete":
-            return try GuestKeychain.delete(
-                account: string(params, "account"),
-                service: string(params, "service"),
-            )
+            return try GuestKeychain.delete(GuestKeychain.Identity(params))
         case "agent.apply_update":
             let expected = try string(params, "sha256")
             let cache = "/var/root/Library/Caches/vphoned"
@@ -490,6 +515,17 @@ enum GuestAPI {
     static func requireForce(_ params: [String: Any], _ action: String) throws {
         guard bool(params, "force") else {
             throw GuestAPIError.invalidRequest("Pass force: true to \(action)")
+        }
+    }
+
+    /// Digitizer phase codes for vphoned's own multi-finger injection path.
+    /// icli keeps its equivalent mapping module-internal, and these are the
+    /// values the private digitizer entry points take: 0 down, 1 move, 3 up.
+    static func touchPhaseCode(_ phase: TouchPhase) -> Int32 {
+        switch phase {
+        case .down: 0
+        case .move: 1
+        case .up: 3
         }
     }
 }

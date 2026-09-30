@@ -32,6 +32,7 @@ enum VPhoneCustomFirmwareDyldSharedCacheVerbs {
             VPhoneCustomFirmwarePatchLSDEmbeddedRegCommand.self,
             VPhoneCustomFirmwarePatchXPCLWCRCommand.self,
             VPhoneCustomFirmwarePatchLockdownModeCommand.self,
+            VPhoneCustomFirmwarePatchMISTrustAuthCommand.self,
             VPhoneCustomFirmwarePatchCameraDyldSharedCacheCommand.self,
         ]
     }
@@ -187,7 +188,7 @@ struct VPhoneCustomFirmwarePatchIOMFBForceKernCommand: ParsableCommand {
         side file has to be present; without it there would be zero pairs to
         find, which would read as "this userland has none".
 
-        Pairs with the KernelJailbreakPatchIomfbSwap kernel patches, which make the
+        Pairs with the KernelCustomFirmwarePatchIomfbSwap kernel patches, which make the
         userclient accept 27's native 0x6e0 SwapEnd struct. Modified pages are
         re-attested; an already-forced cache is a no-op.
         """,
@@ -229,8 +230,8 @@ struct VPhoneCustomFirmwarePatchDyldSharedCacheMaxSlideCommand: ParsableCommand 
         with full slide is left alone and a cache already at maxSlide 0 is left
         alone either way. Both are reported and exit 0.
 
-        --force zeroes maxSlide even when the cache fits — the opt-in behind
-        FORCE_DSC_MAXSLIDE=1 for a non-27 base.
+        --force zeroes maxSlide even when the cache fits. It is for running this
+        verb by hand; `cfw install` never passes it.
 
         No re-attestation: maxSlide lives in the cache header, which is not one
         of the cs_validate'd code pages.
@@ -263,7 +264,7 @@ struct VPhoneCustomFirmwarePatchDyldSharedCacheMaxSlideCommand: ParsableCommand 
 struct VPhoneCustomFirmwarePatchLSDEmbeddedRegCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "patch-lsd-embedded-reg",
-        abstract: "Open lsd's embedded-registration path so JB app installs can register",
+        abstract: "Open lsd's embedded-registration path so CFW app installs can register",
         discussion: """
         On iOS 27, `-[_LSDModifyClient
         clientIsEntitledForEmbeddedRegistrationOperations]` demands three
@@ -295,6 +296,53 @@ struct VPhoneCustomFirmwarePatchLSDEmbeddedRegCommand: ParsableCommand {
 
     func run() throws {
         try DyldSharedCacheLSDEmbeddedRegPatcher.patch(
+            chunksDirectory: chunksDirectory,
+            dryRun: dryRun,
+            log: VPhoneCustomFirmwareDyldSharedCacheVerbs.stdout,
+        )
+    }
+}
+
+// MARK: - patch-mis-trust-auth
+
+struct VPhoneCustomFirmwarePatchMISTrustAuthCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "patch-mis-trust-auth",
+        abstract: "Accept a provisioning profile that wants online authorization",
+        discussion: """
+        A guest restored by this project is hacktivated, so it holds no
+        activation record and `online-auth-agent` can never obtain the device
+        identity an authorization request is signed with. `libmis`'s
+        `checkTrustAndAuthorization` therefore returns 0xE8008026 — "missing
+        trust and/or authorization" — and the profile stays in the
+        "Profile Needs Network Validation" state for good. In practice that is
+        what stops an app signed with a free personal-team Apple Development
+        certificate from launching, and what makes Settings' "Verify App" fail.
+
+        The function is short-circuited to return success. Two instructions,
+        written after the prologue's `pacibsp` so the PAC pair stays balanced.
+        The function is static and carries no symbol, so it is found by the log
+        string that names it and confirmed by the failure code its prologue
+        seeds; the page is re-attested afterwards.
+
+        Self-gating: a cache whose libmis lacks that string is reported and
+        exits 0, and a cache already carrying the patched shape is a no-op. A
+        cache with the string but not the prologue is an error — MIS has been
+        rewritten, and guessing at it would be worse than stopping.
+        """,
+    )
+
+    @Argument(
+        help: "The guest's /System/Library/Caches/com.apple.dyld directory",
+        transform: URL.init(fileURLWithPath:),
+    )
+    var chunksDirectory: URL
+
+    @Flag(name: .customLong("dry-run"), help: "Report the site and write nothing")
+    var dryRun = false
+
+    func run() throws {
+        try DyldSharedCacheMISTrustAuthPatcher.patch(
             chunksDirectory: chunksDirectory,
             dryRun: dryRun,
             log: VPhoneCustomFirmwareDyldSharedCacheVerbs.stdout,
