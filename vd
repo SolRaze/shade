@@ -80,7 +80,7 @@ case $cmd in
     ditto "$built" /Applications/v-deuce.bundle
     ln -sf /Applications/v-deuce.bundle/Contents/MacOS/vphone-cli "$(brew --prefix)/bin/vphone-cli"
     print "installed $built as /Applications/v-deuce.bundle"
-    [[ -n $running ]] && "$0" up
+    [[ -z $running ]] || "$0" up
     ;;
   ping) send '{"t":"ping"}' >/dev/null && print ok ;;
   tap) act "{\"t\":\"tap\",\"x\":$(px $1),\"y\":$(px $2)}" ;;
