@@ -191,6 +191,9 @@ extension GuestIrisinInstaller {
                     } catch {
                         NSLog("vphoned: could not repair RootHide bootstrap: %@", String(describing: error))
                     }
+                    // A package install leaves its LaunchDaemon unloaded, so the
+                    // daemon loads here rather than only at the next boot.
+                    loadBootstrapDaemons(layout: "roothide", root: root)
                 }
             }
             source.setCancelHandler { close(descriptor) }
