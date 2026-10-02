@@ -36,7 +36,7 @@ automation
 `vd up` `down` `deploy` | `tap` `swipe` `key` `type` `look` | `ui` `front` `open` | `rpc` any vphoned method | `vd` alone prints usage
 `vd deploy` Release build, replaces `/Applications/v-deuce.bundle`, links `vphone-cli` into it, reboots a running guest
 `vd up --headless` no window | `look` falls back to the guest's own screenshot, drops the agent under heavy apps like Instagram
-`vd tune` reduced motion and transparency, no background refresh, 30 daemons in `TUNE_OFF` off | rerun after a restore | `rpc services.enable` undoes one
+`vd tune` reduced motion and transparency, no background refresh, 30 daemons in `TUNE_OFF` off, locale `en_US`, host zone | rerun after a restore | `rpc services.enable` undoes one
 `vd idle [MIN]` stops the guest after MIN min, default 30, with no `vd` call and no window focus | `~/Library/LaunchAgents/dev.sol.vd-idle.plist` runs it every 5 min
 
 host
@@ -65,6 +65,6 @@ SpringBoard draws the island from the DT model identity, not the display propert
 MobileGestalt caches the identity | move `systemgroup.com.apple.mobilegestaltcache/Library/Caches/com.apple.MobileGestalt.plist` aside and reboot after a retarget
 Launch Services draws a `BNDL` with the generic plug-in icon | Finder and `NSRunningApplication.icon` show it | the Dock tile is set in code
 Japan or EU region at setup blocks system apps | pick United States
-setup leaves locale `en_AI`, 24 h clock, foreign zone | set `AppleLocale` `en_US`, link `/private/var/db/timezone/localtime` to the host zone, respring
+setup leaves locale `en_AI`, 24 h clock, foreign zone | `vd tune` sets `AppleLocale` `en_US`, links `/private/var/db/timezone/localtime` to the host zone, resprings
 nested Mac VM cannot host | PV=3 needs bare metal
 upstream is remote `origin` | pull, never reset | own remote `sol`, branch `deuce`

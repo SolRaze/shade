@@ -8,7 +8,8 @@
 #   vd up [--headless] | down | ping
 #   vd deploy                 Release build, install to /Applications, reboot a running guest
 #   vd tune                   reapply the guest cuts: reduced motion and transparency,
-#                             no background refresh, background daemons in TUNE_OFF disabled
+#                             no background refresh, background daemons in TUNE_OFF disabled,
+#                             locale en_US and the host time zone
 #   vd idle [MIN]             stop the guest when neither vd nor its window was used for
 #                             MIN minutes, default 30; run every 5 min by dev.sol.vd-idle
 #   vd tap X Y | swipe X1 Y1 X2 Y2 [MS] | key NAME | type TEXT
@@ -117,7 +118,14 @@ case $cmd in
       "$0" rpc services.disable "{\"label\":\"$l\",\"force\":true}" >/dev/null && (( ++n ))
       "$0" rpc services.stop "{\"label\":\"$l\",\"force\":true}" >/dev/null 2>&1 || true
     done
-    print "tuned | $n/${#TUNE_OFF} daemons off"
+    # Setup leaves locale en_AI and a foreign zone; both show only after a respring.
+    "$0" rpc files.symlink "$(jq -nc --arg t "$(readlink /etc/localtime)" \
+      '{target:$t, link:"/private/var/db/timezone/localtime", replace:true}')" >/dev/null
+    if [[ $("$0" rpc settings.get '{"domain":".GlobalPreferences","key":"AppleLocale"}' | jq -r .value) != en_US ]]; then
+      "$0" rpc settings.set '{"domain":".GlobalPreferences","key":"AppleLocale","value":"en_US"}' >/dev/null
+      "$0" rpc system.respring '{"force":true}' >/dev/null
+    fi
+    print "tuned | $n/${#TUNE_OFF} daemons off | clock $(readlink /etc/localtime | sed 's|.*zoneinfo/||')"
     ;;
   idle)
     pgrep -f "/$vm/config.plist" >/dev/null || exit 0
