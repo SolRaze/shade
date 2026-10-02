@@ -32,7 +32,7 @@ vphone-cli は Apple の Virtualization.framework と PCC 研究用仮想マシ�
 
 ## クイックスタート
 
-1. 最新の [vphone-launchpad](https://github.com/Lakr233/vphone-cli/releases/latest)（`vphone-launchpad-<バージョン>.zip`）をダウンロードし、展開して開きます。
+1. [最新のリリース](https://github.com/Lakr233/vphone-cli/releases/latest)から `vphone-launchpad-<バージョン>-notarized.zip` をダウンロードし、展開して開きます。すべてのリリースが公証済みではありません。最新リリースに `-notarized` ファイルがない場合は、[ダウンロードガイド](Downloads/README.md)から公証済みのバージョンを選んでください。
 2. **Host Setup** で開発者ツールへのアクセスを許可し、ヘルパーをインストールします。
 3. **Core Bundle** で **Download and Install** をクリックします。Launchpad が `VPhone.bundle` をダウンロードして検証し、その中の仮想マシン用プログラムがこの Mac で実行できるようにします。
 4. **Machines** で **New Machine** をクリックし、ファームウェアの組み合わせを選んで **Create** をクリックします。
@@ -40,6 +40,23 @@ vphone-cli は Apple の Virtualization.framework と PCC 研究用仮想マシ�
 Launchpad がファームウェアのダウンロード、パッチの適用、システムの復元、初回起動を行います。完了後も仮想マシンは実行されたままです。
 
 自分の iPhone と cloudOS の IPSW を使うこともできます。検証済みの組み合わせは[互換性ガイド](Guides/compatibility.md)をご覧ください。
+
+### エージェントに任せる
+
+この Mac でコーディングエージェントを使っている場合は、手順を手作業で進める代わりに、次のプロンプトを貼り付けてください。エージェントは vphone スキルを読み、設定済みの部分を確認して Launchpad と `VPhone.bundle` をインストールします。管理者パスワードや macOS リカバリでの変更など、あなたの操作が必要な手順では止まって確認します。
+
+```text
+この Mac に vphone をセットアップしてください。まず次のスキルを読んでください：
+https://raw.githubusercontent.com/Lakr233/vphone-cli/main/Skills/vphone-guest-control/SKILL.md
+および同じフォルダの references/ 以下にリンクされたファイルを読み、その手順に従います：
+公証済みの最新の vphone-launchpad をインストールし（すべてのリリースに
+-notarized zip があるわけではありません）、vphone-launchpad-cli を PATH に通し、
+Launchpad と同じシリーズの VPhone.bundle をインストールして、
+`vphone-launchpad-cli status` で確認してください。SIP、boot-args などホストの
+セキュリティ設定は変更せず、ファームウェアと空きディスク容量を私が確認するまで
+マシンは作成しないでください。私の操作が必要な手順では、何をすればよいかを
+正確に伝えて待ってください。
+```
 
 ## パッケージ環境のインストール
 
@@ -102,10 +119,12 @@ token は起動のたびに新しく生成されます。token を固定する�
 
 | ドキュメント | 内容 |
 | --- | --- |
+| [ダウンロードガイド](Downloads/README.md) | 公証済みの Launchpad バージョンと対応する `VPhone.bundle` バージョン |
 | [ホストの設定](Guides/host-setup.md) | SIP と AMFI の設定、ソースからのビルド、環境の確認 |
 | [作成と実行](Guides/create-and-run.md) | ファームウェアの入手元、作成の流れ、ストレージとバックアップ |
 | [互換性ガイド](Guides/compatibility.md) | 検証済みのファームウェアの組み合わせ |
 | [トラブルシューティング](Guides/troubleshooting.md) | よくあるエラーと対処方法 |
+| [ネットワーク](Guides/networking.md) | ネットワークモードと、Mac が VPN やプロキシを使うときの `tunnel` |
 | [Launchpad コマンドライン](Guides/launchpad-cli.md) | `vphone-launchpad-cli` でローカルビルドをインストールしてテストする |
 | [研究記録](../Research/README.md) | パッチと実装の詳細 |
 
