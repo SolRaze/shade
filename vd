@@ -5,8 +5,12 @@
 # returns; the socket takes device pixels, so they are multiplied by VD_SCALE.
 # Each action writes that image to VD_IMG and prints its path.
 #
-#   vd up | down | ping
-#   vd deploy                 build, install to /Applications, reboot a running guest
+#   vd up [--headless] | down | ping
+#   vd deploy                 Release build, install to /Applications, reboot a running guest
+#   vd tune                   reapply the guest cuts: reduced motion and transparency,
+#                             no background refresh, background daemons in TUNE_OFF disabled
+#   vd idle [MIN]             stop the guest when neither vd nor its window was used for
+#                             MIN minutes, default 30; run every 5 min by dev.sol.vd-idle
 #   vd tap X Y | swipe X1 Y1 X2 Y2 [MS] | key NAME | type TEXT
 #   vd shot [PATH]            full-resolution screenshot
 #   vd look                   compact image only, from the window's display
@@ -24,6 +28,7 @@
 
 set -euo pipefail
 vm=${VD_VM:-v-deuce}
+stamp=/tmp/vd-$vm.used
 sock=${VPHONE_LIBRARY_ROOT:-$HOME/.vphone/machines}/$vm/vphone.sock
 scale=${VD_SCALE:-3}
 img=${VD_IMG:-/tmp/vd.jpg}
@@ -52,11 +57,29 @@ px() { print $(( $1 * scale )) }
 
 cmd=${1:-}
 (( $# )) && shift
+[[ $cmd == idle ]] || touch "$stamp"
+
+# Guest daemons vd tune disables. None backs anything this guest is used for;
+# services.enable with the label brings one back.
+TUNE_OFF=(
+  com.apple.SiriTTSTrainingAgent com.apple.assistant_cdmd com.apple.assistantd
+  com.apple.siri.context.service com.apple.siriactionsd com.apple.siriinferenced
+  com.apple.siriknowledged com.apple.sirittsd com.apple.corespeechd
+  com.apple.photoanalysisd com.apple.mediaanalysisd com.apple.cameracaptured
+  com.apple.findmy.findmybeaconingd com.apple.findmy.findmylocated
+  com.apple.icloud.findmydeviced com.apple.icloud.searchpartyd
+  com.apple.cloudd com.apple.itunescloudd
+  com.apple.knowledgeconstructiond com.apple.intelligenceplatformd
+  com.apple.generativeexperiencesd com.apple.servicesintelligenced
+  com.apple.finhealthd com.apple.fitnessintelligenced com.apple.batteryintelligenced
+  com.apple.tipsd com.apple.gamed com.apple.duetexpertd
+  com.apple.spotlightknowledged com.apple.spotlightknowledged.updater
+)
 case $cmd in
   up)
     if ! send '{"t":"ping"}' >/dev/null 2>&1; then
       pgrep -f "/$vm/config.plist" >/dev/null ||
-        nohup vphone-cli vm launch "$vm" >"/tmp/vd-$vm.log" 2>&1 &!
+        nohup vphone-cli vm launch "$vm" "$@" >"/tmp/vd-$vm.log" 2>&1 &!
       for _ in {1..180}; do
         send '{"t":"ping"}' >/dev/null 2>&1 && break
         sleep 1
@@ -68,9 +91,9 @@ case $cmd in
   down) vphone-cli vm stop "$vm" ;;
   deploy)
     repo=${0:A:h}
-    xcodebuild -workspace "$repo/VPhone.xcworkspace" -scheme VPhone -configuration Debug \
+    xcodebuild -workspace "$repo/VPhone.xcworkspace" -scheme VPhone -configuration Release \
       -destination 'platform=macOS,arch=arm64' -derivedDataPath "$repo/.build/XcodeBundle" build -quiet
-    built=$repo/.build/XcodeBundle/Build/Products/Debug/VPhone.bundle
+    built=$repo/.build/XcodeBundle/Build/Products/Release/VPhone.bundle
     [[ -x $built/Contents/MacOS/vphone-vm ]] || { print -u2 "vd: no bundle at $built"; exit 1 }
     running=$(pgrep -f "/$vm/config.plist" || true)
     [[ -n $running ]] && vphone-cli vm stop "$vm"
@@ -83,6 +106,27 @@ case $cmd in
     [[ -z $running ]] || "$0" up
     ;;
   ping) send '{"t":"ping"}' >/dev/null && print ok ;;
+  tune)
+    for kv in com.apple.Accessibility:ReduceMotionEnabled:true \
+      com.apple.Accessibility:EnhancedBackgroundContrastEnabled:true com.apple.mt:KeepAppsUpToDateEnabled:false; do
+      IFS=: read d k v <<<"$kv"
+      "$0" rpc settings.set "$(jq -nc --arg d $d --arg k $k --argjson v $v '{domain:$d, key:$k, value:$v}')" >/dev/null
+    done
+    n=0
+    for l in $TUNE_OFF; do
+      "$0" rpc services.disable "{\"label\":\"$l\",\"force\":true}" >/dev/null && (( ++n ))
+      "$0" rpc services.stop "{\"label\":\"$l\",\"force\":true}" >/dev/null 2>&1 || true
+    done
+    print "tuned | $n/${#TUNE_OFF} daemons off"
+    ;;
+  idle)
+    pgrep -f "/$vm/config.plist" >/dev/null || exit 0
+    # A focused guest window counts as use.
+    [[ $(lsappinfo info -only bundlepath "$(lsappinfo front)") == *v-deuce.bundle* ]] && touch "$stamp"
+    [[ -f $stamp && -z $(find "$stamp" -mmin +${1:-30}) ]] && exit 0
+    print "$(date '+%F %T') idle ${1:-30} min, stopping $vm"
+    vphone-cli vm stop "$vm"
+    ;;
   tap) act "{\"t\":\"tap\",\"x\":$(px $1),\"y\":$(px $2)}" ;;
   swipe) act "{\"t\":\"swipe\",\"x1\":$(px $1),\"y1\":$(px $2),\"x2\":$(px $3),\"y2\":$(px $4),\"ms\":${5:-300}}" ;;
   key) act "$(jq -nc --arg n "$1" '{t:"key", name:$n}')" ;;

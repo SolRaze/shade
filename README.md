@@ -34,7 +34,10 @@ API | `--api-listen 127.0.0.1:8765` | bearer token printed as `[api] token: …`
 automation
 `./vd` | shell client of `<VM>/vphone.sock` | coordinates in points, each action writes a 430x932 screen to `/tmp/vd.jpg`
 `vd up` `down` `deploy` | `tap` `swipe` `key` `type` `look` | `ui` `front` `open` | `rpc` any vphoned method | `vd` alone prints usage
-`vd deploy` builds, replaces `/Applications/v-deuce.bundle`, links `vphone-cli` into it, reboots a running guest
+`vd deploy` Release build, replaces `/Applications/v-deuce.bundle`, links `vphone-cli` into it, reboots a running guest
+`vd up --headless` no window | `look` falls back to the guest's own screenshot, drops the agent under heavy apps like Instagram
+`vd tune` reduced motion and transparency, no background refresh, 30 daemons in `TUNE_OFF` off | rerun after a restore | `rpc services.enable` undoes one
+`vd idle [MIN]` stops the guest after MIN min, default 30, with no `vd` call and no window focus | `~/Library/LaunchAgents/dev.sol.vd-idle.plist` runs it every 5 min
 
 host
 Apple Silicon | macOS 15+ | Xcode for source builds
@@ -49,6 +52,8 @@ docs map
 state
 hover chrome matches iPhone Mirroring to about 1 px | light ring #6b against #67, drawn by AppKit
 2.x port runs `v-deuce` | `schemaVersion=2` | iOS 26.1 23B85
+`v-deuce` VM | 4 cores, 3 GB on an 8 GB M1 | Instagram fits | camera daemon off by `vd tune`
+upstream merged to 2.2.5 as one squash commit | upstream history carries AI trailers, never merged as is
 Siri DeviceTree flags unported to the Swift patcher
 
 gotchas
