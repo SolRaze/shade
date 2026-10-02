@@ -1,0 +1,40 @@
+#!/bin/zsh
+# upstream - take Lakr233/vphone-cli changes as one commit
+#
+#   upstream            apply origin/main since the last sync, commit "upstream <version>"
+#   upstream --done     record origin/main as synced after resolving conflicts by hand
+#
+# Upstream history carries AI trailers, so it is never merged: the diff since
+# refs/upstream/synced is applied with a 3-way fallback and committed as one.
+# That ref is local only and marks the upstream commit last taken. Added lines
+# naming an AI tool stop the commit; reword them, then commit by hand.
+
+set -euo pipefail
+cd ${0:A:h}
+ref=refs/upstream/synced
+git fetch -q origin
+tip=$(git rev-parse origin/main)
+
+if [[ ${1:-} == --done ]]; then
+  git update-ref $ref $tip
+  print "synced at $(git log -1 --format='%h %s' $tip)"
+  exit 0
+fi
+
+base=$(git rev-parse -q --verify $ref) || { print -u2 "upstream: no $ref, set it with git update-ref"; exit 1 }
+[[ $base == $tip ]] && { print "up to date at $(git log -1 --format=%h $tip)"; exit 0 }
+[[ -z $(git status --porcelain --untracked-files=no) ]] || { print -u2 "upstream: commit or stash local changes first"; exit 1 }
+
+version=$(git log --format=%s $base..$tip | sed -n 's/^Release //p' | head -1)
+print "$(git rev-list --count $base..$tip) upstream commits${version:+, release $version}"
+if ! git diff --binary $base $tip | git apply -3 --index; then
+  print -u2 "upstream: conflicts above | resolve, git add, then commit \"upstream ${version:-sync}\" and run upstream --done"
+  exit 1
+fi
+if git diff --cached -U0 | rg '^\+' | rg -i 'claude|anthropic|codex|chatgpt|openai|grok|co-authored|generated with'; then
+  print -u2 "upstream: lines above name an AI tool | reword, git add, commit, then upstream --done"
+  exit 1
+fi
+git commit -q -m "upstream ${version:-sync}"
+git update-ref $ref $tip
+print "committed $(git log -1 --format='%h %s') | push with git push sol main:deuce"

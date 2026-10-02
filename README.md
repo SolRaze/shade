@@ -53,7 +53,8 @@ state
 hover chrome matches iPhone Mirroring to about 1 px | light ring #6b against #67, drawn by AppKit
 2.x port runs `v-deuce` | `schemaVersion=2` | iOS 26.1 23B85
 `v-deuce` VM | 4 cores, 3 GB on an 8 GB M1 | Instagram fits | camera daemon off by `vd tune`
-upstream merged to 2.2.5 as one squash commit | upstream history carries AI trailers, never merged as is
+upstream taken to 2.2.5 | upstream history carries AI trailers, never merged as is
+`./upstream` applies origin/main since local `refs/upstream/synced` as one commit `upstream <version>` | conflicts or AI-tool names stop it | `upstream --done` after resolving
 Siri DeviceTree flags unported to the Swift patcher
 
 gotchas
