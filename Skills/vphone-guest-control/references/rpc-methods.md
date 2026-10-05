@@ -51,7 +51,10 @@ invalid-request error, read the source named there instead of guessing keys.
 | `device.snapshot`, `device.screen`, `device.network` | none | Smaller views of the same |
 | `screen.screenshot` | none | Base64 JPEG with `mime_type`, `width`, `height` (1290×2796) |
 | `display.brightness`, `audio.volume` | `value?` | Omit `value` to read |
+| `audio.host_latency` | `seconds?` (0-1) | The Mac output latency the guest speaker adds; omit to read. The VM sends it on every connect and output change |
 | `display.rotation`, `display.orientation` | `orientation?` | |
+| `display.auto_lock` | none | Auto-Lock in seconds (`never` when it is Never) and the Lock Screen timeout vphoned sets to match |
+| `screen.unlock` | `passcode?`, `timeout?` (10) | Display on and Lock Screen passed, from any state; `guest unlock <machine>` calls it. `passcode` only for a guest that has one, entered once |
 | `device.ioreg` | `plane` | e.g. `IODeviceTree` |
 
 ## Input
@@ -117,7 +120,10 @@ different meaning:
   and vphoned **deletes the file after installing**. It re-signs and places the
   bundle itself, bypassing installd and the profile checks, and keeps the app's
   own entitlements (so `get-task-allow` survives, which is the way to get a
-  debuggable test app in). It proves nothing about installd. To get the file
+  debuggable test app in). Its `PlugIns/*.appex` are registered with the app,
+  so extensions (packet tunnels, share sheets, widgets) launch; the result's
+  `plugins` lists them and `unregistered_plugins` any LaunchServices did not
+  take. It proves nothing about installd. To get the file
   into the guest, see [guest-layout](guest-layout.md) ("Handing a file to
   vphoned").
 
@@ -176,6 +182,7 @@ size problem.
 | `settings.delete` | `domain`, `key` |
 | `clipboard.get` / `set` / `clear` | `set` takes `text` |
 | `location.set` / `clear` / `current` | `set` takes latitude/longitude; read-back can fail on some guests |
+| `time.timezone` | none reads `{identifier, automatic, seconds_from_gmt}`; `identifier` (Olson name) pins the zone and turns automatic off; `automatic: true` hands it back to timed. The VM sends the Mac's zone on every connect |
 | `notify.post` / `notify.state` | `name`, `state?` |
 | `keychain.*` | Lists, adds and edits secrets; use only on request and never print values |
 

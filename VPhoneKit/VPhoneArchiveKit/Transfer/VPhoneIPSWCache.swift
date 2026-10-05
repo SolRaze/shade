@@ -25,6 +25,7 @@ public enum VPhoneIPSWCache {
         case swappedSources(iPhone: URL, cloudOS: URL)
         case notIPhoneSource(URL, productTypes: [String])
         case notCloudOSSource(URL)
+        case noVirtualPhoneInCloudOS(URL, version: String, build: String)
 
         public var errorDescription: String? {
             switch self {
@@ -37,9 +38,11 @@ public enum VPhoneIPSWCache {
             case let .swappedSources(iPhone, cloudOS):
                 "The iPhone and cloudOS IPSWs are swapped: \(iPhone.lastPathComponent) is a cloudOS IPSW and \(cloudOS.lastPathComponent) is an iPhone IPSW. Swap the two sources, then try again."
             case let .notIPhoneSource(file, productTypes):
-                "\(file.lastPathComponent) is not an \(VPhoneIPSWCache.iPhoneProductType) IPSW; it is for \(productTypes.isEmpty ? "no listed product" : productTypes.joined(separator: ", ")). Choose an \(VPhoneIPSWCache.iPhoneProductType) IPSW as the iPhone source."
+                "\(file.lastPathComponent) is not an IPSW vphone can run; it is for \(productTypes.isEmpty ? "no listed product" : productTypes.joined(separator: ", ")). Choose an IPSW for \(VPhoneIPSWCache.guestProductTypes.joined(separator: " or ")) as the iPhone source."
             case let .notCloudOSSource(file):
                 "\(file.lastPathComponent) is not a cloudOS IPSW: it has no \(VPhoneIPSWCache.cloudOSDeviceClass) build identity. Choose a cloudOS IPSW as the cloudOS source."
+            case let .noVirtualPhoneInCloudOS(file, version, build):
+                "cloudOS \(version) (\(build)) in \(file.lastPathComponent) has no \(VPhoneIPSWCache.guestDeviceClass) build identity to boot the guest from; no cloudOS after the 26.4 beta (23E5207q) has one. Choose the cloudOS `vphone-cli fw catalog` recommends."
             }
         }
     }
@@ -139,14 +142,23 @@ public enum VPhoneIPSWCache {
         }
     }
 
-    public static func inspect(_ file: URL) throws -> Archive {
+    /// The IPSW's BuildManifest, read without unpacking anything else.
+    public static func buildManifest(of file: URL) throws -> [String: Any] {
         guard FileManager.default.fileExists(atPath: file.path) else {
             throw Error.missingFile(file)
         }
         guard let data = try? VPhoneArchiveReader.readMember("BuildManifest.plist", from: file),
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
-              as? [String: Any],
-              let version = plist["ProductVersion"] as? String, !version.isEmpty,
+              as? [String: Any]
+        else {
+            throw Error.invalidManifest(file)
+        }
+        return plist
+    }
+
+    public static func inspect(_ file: URL) throws -> Archive {
+        let plist = try buildManifest(of: file)
+        guard let version = plist["ProductVersion"] as? String, !version.isEmpty,
               let build = plist["ProductBuildVersion"] as? String, !build.isEmpty
         else {
             throw Error.invalidManifest(file)
@@ -247,15 +259,32 @@ public enum VPhoneIPSWCache {
     /// chain matches the VM's DFU hardware. The restore tree needs both.
     public static let iPhoneProductType = VPhoneFirmwareCatalog.device
     public static let cloudOSDeviceClass = "vresearch101ap"
+    /// The cloudOS device class that supplies the guest's kernel, SEP and
+    /// device tree. No cloudOS after the 26.4 beta (23E5207q) carries it,
+    /// including the 26.4 release (23E244) and every one up to 26.7 (23H20).
+    public static let guestDeviceClass = "vphone600ap"
+
+    /// Every product whose IPSW can supply the guest OS: the iPhone17,3 the
+    /// catalog targets, and the iPads `VPhoneGuestDevice` knows.
+    public static var guestProductTypes: [String] {
+        VPhoneGuestDevice.known.map(\.productType)
+    }
+
+    /// The guest device an IPSW supplies, or nil for any other product. An IPSW
+    /// that covers several models gives `preferring` when it is one of them, and
+    /// its first known model otherwise.
+    public static func guestDevice(for archive: Archive, preferring productType: String? = nil) -> VPhoneGuestDevice? {
+        VPhoneGuestDevice.detect(buildManifest: ["SupportedProductTypes": archive.productTypes], preferring: productType)
+    }
 
     /// Checks each BuildManifest before anything is extracted, so a swapped
     /// or wrong IPSW fails at once with the fix instead of deep in the merge.
     public static func checkPair(iPhone: Archive, cloudOS: Archive) throws {
-        let iPhoneIsPhone = iPhone.productTypes.contains(iPhoneProductType)
+        let iPhoneIsPhone = guestDevice(for: iPhone) != nil
         let cloudOSIsCloudOS = cloudOS.deviceClasses.contains(cloudOSDeviceClass)
         if !iPhoneIsPhone, !cloudOSIsCloudOS,
            iPhone.deviceClasses.contains(cloudOSDeviceClass),
-           cloudOS.productTypes.contains(iPhoneProductType)
+           guestDevice(for: cloudOS) != nil
         {
             throw Error.swappedSources(iPhone: iPhone.file, cloudOS: cloudOS.file)
         }
@@ -264,6 +293,9 @@ public enum VPhoneIPSWCache {
         }
         guard cloudOSIsCloudOS else {
             throw Error.notCloudOSSource(cloudOS.file)
+        }
+        guard cloudOS.deviceClasses.contains(guestDeviceClass) else {
+            throw Error.noVirtualPhoneInCloudOS(cloudOS.file, version: cloudOS.version, build: cloudOS.build)
         }
     }
 

@@ -168,10 +168,12 @@ struct VPhoneFirmwareManifestCommand: ParsableCommand {
 struct VPhoneFirmwareCatalogCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "catalog",
-        abstract: "Show the known iOS ↔ cloudOS firmware pairings (recommended per iOS build)",
+        abstract: "Show the known iOS/iPadOS ↔ cloudOS firmware pairings (recommended per build)",
     )
 
     @Flag(name: .shortAndLong, help: "Emit JSON") var json = false
+    @Option(help: ArgumentHelp("Show only this guest device's pairings, e.g. iPad16,1", valueName: "product-type"))
+    var device: String?
 
     func run() throws {
         let report = VPhoneFirmwareCatalog.report
@@ -179,13 +181,25 @@ struct VPhoneFirmwareCatalogCommand: ParsableCommand {
             try print(String(decoding: JSONEncoder().encode(report), as: UTF8.self))
             return
         }
-        print("Firmware catalog (\(report.device))")
-        let width = report.pairings.map(\.ios.name.count).max() ?? 0
-        let header = "iOS".padding(toLength: width, withPad: " ", startingAt: 0)
-        print("\(header)  recommended cloudOS")
-        for e in report.pairings {
-            let ios = e.ios.name.padding(toLength: width, withPad: " ", startingAt: 0)
-            print("\(ios)  \(e.recommendedCloudOS.name)")
+        var devices = report.devices
+        if let device {
+            guard let guest = VPhoneGuestDevice.named(device) else {
+                throw ValidationError("vphone runs \(VPhoneGuestDevice.known.map(\.productType).joined(separator: ", ")) guests, not \(device).")
+            }
+            devices = devices.filter { $0.productType == guest.productType }
+        }
+        for (index, entry) in devices.enumerated() {
+            if index > 0 {
+                print("")
+            }
+            print("Firmware catalog (\(entry.productType), \(entry.name))")
+            let os = entry.family == "iPad" ? "iPadOS" : "iOS"
+            let width = max(os.count, entry.pairings.map(\.ios.name.count).max() ?? 0)
+            print("\(os.padding(toLength: width, withPad: " ", startingAt: 0))  recommended cloudOS")
+            for e in entry.pairings {
+                let ios = e.ios.name.padding(toLength: width, withPad: " ", startingAt: 0)
+                print("\(ios)  \(e.recommendedCloudOS.name)")
+            }
         }
     }
 }
@@ -208,6 +222,11 @@ struct VPhoneFirmwarePrepareCommand: ParsableCommand {
     var ipswCache: String?
     @Option(help: "iPhone version to resolve to an IPSW") var iphoneVersion: String?
     @Option(help: "iPhone build to resolve to an IPSW") var iphoneBuild: String?
+    @Option(help: ArgumentHelp(
+        "Guest device: picks the model from an IPSW that covers several (iPad15,5 from the iPad Air IPSW), and the device --list, --iphone-version and --iphone-build look up (default: iPhone17,3)",
+        valueName: "product-type",
+    ))
+    var device: String?
     @Flag(help: "List downloadable IPSWs and exit") var list = false
     @Option(name: .shortAndLong, help: "Resource base override (default: inferred from the running binary path)")
     var projectRoot: String?
@@ -220,9 +239,14 @@ struct VPhoneFirmwarePrepareCommand: ParsableCommand {
         let bundleGuide = resources.base.appendingPathComponent("docs/guides/compatibility.md")
         let readme = FileManager.default.fileExists(atPath: sourceGuide.path) ? sourceGuide.path : bundleGuide.path
         let needsCatalog = list || iphoneVersion != nil || iphoneBuild != nil
+        if let device, VPhoneGuestDevice.named(device) == nil {
+            throw ValidationError("vphone runs \(VPhoneGuestDevice.known.map(\.productType).joined(separator: ", ")) guests, not \(device).")
+        }
+        let chosenDevice = device
+        let device = device ?? VPhoneFirmwareCatalog.device
         let urls = if needsCatalog {
             try vphoneRunBlocking {
-                try await VPhoneFirmwareIndex.restoreURLs(forDevice: "iPhone17,3")
+                try await VPhoneFirmwareIndex.restoreURLs(forDevice: device)
             }.joined(separator: "\n")
         } else {
             ""
@@ -230,7 +254,7 @@ struct VPhoneFirmwarePrepareCommand: ParsableCommand {
 
         if list {
             let code = VPhoneFirmwareMatrixCommandLine.list(
-                device: "iPhone17,3",
+                device: device,
                 readmePath: readme,
                 downloadURLs: urls,
             )
@@ -246,7 +270,7 @@ struct VPhoneFirmwarePrepareCommand: ParsableCommand {
                 throw ValidationError("Use either --iphone-source or --iphone-version/--iphone-build.")
             }
             let selection = VPhoneFirmwareMatrix.selection(
-                device: "iPhone17,3",
+                device: device,
                 version: iphoneVersion ?? "",
                 build: iphoneBuild ?? "",
                 readme: try? String(contentsOfFile: readme, encoding: .utf8),
@@ -260,7 +284,7 @@ struct VPhoneFirmwarePrepareCommand: ParsableCommand {
             }
         }
 
-        let selected = try VPhoneFirmwareSourceSelection.resolve(iphone: source, cloudos: cloudosSource)
+        let selected = try VPhoneFirmwareSourceSelection.resolve(iphone: source, cloudos: cloudosSource, device: chosenDevice)
         guard let phone = selected.iphoneSource, let cloud = selected.cloudosSource else {
             throw ValidationError("Specify both --iphone-source and --cloudos-source when running without a terminal.")
         }
@@ -276,6 +300,7 @@ struct VPhoneFirmwarePrepareCommand: ParsableCommand {
             ipswCacheDirectory: ipswCache.map {
                 URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true)
             } ?? VPhoneResources.ipswCacheDirectory(),
+            device: chosenDevice,
             bundle: bundle,
             resources: resources,
         )

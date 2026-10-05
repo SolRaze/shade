@@ -34,6 +34,38 @@ struct VPhoneLaunchpadMachineStateLabel: View {
     }
 }
 
+// MARK: - Core Bundle label
+
+/// The version a machine runs with, as the table shows it, with a warning
+/// when that version is gone or the guest environment came from another.
+struct VPhoneLaunchpadMachineBundleLabel: View {
+    let machine: VPhoneLaunchpadMachinePath
+    @Environment(VPhoneLaunchpadModel.self) private var model
+
+    var body: some View {
+        let library = model.machines
+        let version = library.bundleVersion(for: machine)
+        let warning: String? = if let version, !model.bundles.selectableVersions.contains(version) {
+            String(localized: "VPhone.bundle \(version) is not installed. Choose Change Core Bundle… to run this machine with another version.")
+        } else if let binding = library.bindings[machine], binding.hasMixedVersions, let guest = binding.guestEnvironment {
+            String(localized: "The guest environment is from \(guest).") + " " + VPhoneLaunchpadMachineInspector.mixedHelp
+        } else {
+            nil
+        }
+        HStack(spacing: 4) {
+            Text(verbatim: version ?? "—")
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if warning != nil {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+                    .imageScale(.small)
+            }
+        }
+        .help(warning ?? version ?? "")
+    }
+}
+
 // MARK: - Inspector
 
 /// The trailing inspector for the selected machine. Values are split into
@@ -43,6 +75,7 @@ struct VPhoneLaunchpadMachineInspector: View {
     let machine: VPhoneLaunchpadMachine
     let onShowProgress: (VPhoneLaunchpadMachinePath) -> Void
     let onOpenConsole: (VPhoneLaunchpadMachinePath) -> Void
+    var onChangeBundle: (VPhoneLaunchpadMachine) -> Void = { _ in }
     @Environment(VPhoneLaunchpadModel.self) private var model
     @State private var showsCommands = false
 
@@ -82,11 +115,25 @@ struct VPhoneLaunchpadMachineInspector: View {
                 }
             }
 
+            coreBundleSection
+
             Section("Hardware") {
                 LabeledContent("CPU", value: String(localized: "\(machine.cpuCount) cores"))
                 LabeledContent("Memory", value: VPhoneLaunchpadMachinesView.memory(machine.memoryMB))
                 LabeledContent("Disk", value: VPhoneLaunchpadMachinesView.disk(machine.diskSizeBytes))
                 LabeledContent("Network", value: machine.networkDescription)
+                if let address = machine.addressDescription {
+                    LabeledContent("IPv4 Address", value: address)
+                }
+                if !machine.network.macAddress.isEmpty {
+                    LabeledContent("MAC Address", value: machine.network.macAddress)
+                }
+                if let name = machine.network.localHostName {
+                    LabeledContent("mDNS Name", value: "\(name).local")
+                }
+                ForEach(machine.network.portForwards ?? [], id: \.self) { forward in
+                    LabeledContent("Port Forward", value: "\(forward.transport.uppercased()) \(forward.hostAddress ?? "127.0.0.1"):\(forward.hostPort) → \(forward.guestPort)")
+                }
             }
 
             Section("Identity") {
@@ -115,6 +162,62 @@ struct VPhoneLaunchpadMachineInspector: View {
         .sheet(isPresented: $showsCommands) {
             VPhoneLaunchpadCommandHistoryView()
                 .environment(model)
+        }
+    }
+
+    static var mixedHelp: String {
+        String(localized: "The host programs and the guest environment come from different Core Bundles. Update the guest environment to match.")
+    }
+
+    // MARK: - Core Bundle
+
+    /// The three layers a bundle provides, each from the bundle that last
+    /// wrote it. A new binding reaches the host programs at the next start
+    /// and the guest environment when it is updated, never the boot chain.
+    private var coreBundleSection: some View {
+        let binding = library.bindings[machine.path]
+        let version = library.bundleVersion(for: machine.path)
+        let isInstalled = version.map(model.bundles.selectableVersions.contains) ?? false
+        return Section("Core Bundle") {
+            layer(
+                "Host Programs",
+                version ?? String(localized: "Unknown"),
+                warning: isInstalled ? nil : version.map { String(localized: "VPhone.bundle \($0) is not installed.") },
+                help: String(localized: "vphone-cli and vphone-vm come from this bundle at every start."),
+            )
+            layer(
+                "Guest Environment",
+                binding?.guestEnvironment ?? String(localized: "Unknown"),
+                warning: binding?.hasMixedVersions == true ? Self.mixedHelp : nil,
+                help: String(localized: "vphoned and the hook libraries in the guest."),
+            )
+            layer(
+                "Boot Chain",
+                binding?.bootChain ?? String(localized: "Unknown"),
+                help: String(localized: "Fixed when the machine was created."),
+            )
+            HStack {
+                Spacer()
+                Button("Change…") { onChangeBundle(machine) }
+                    .disabled(model.bundles.selectableVersions.isEmpty || library.creations[machine.path]?.isRunning == true)
+            }
+        }
+    }
+
+    private func layer(_ title: LocalizedStringKey, _ value: String, warning: String? = nil, help: String) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 4) {
+                if warning != nil {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.yellow)
+                        .imageScale(.small)
+                }
+                Text(value)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            .help(warning ?? help)
         }
     }
 

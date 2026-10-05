@@ -73,8 +73,26 @@ fi
 /bin/cp "$guest_products/vcamcaptured/libvcamcaptured.plist" "$guest/libvcamcaptured.plist"
 /bin/cp "$guest_products/misfix/libmisfix.dylib" "$guest/libmisfix.dylib"
 /bin/cp "$guest_products/misfix/libmisfix.plist" "$guest/libmisfix.plist"
+/bin/cp "$guest_products/hapticsfix/libhapticsfix.dylib" "$guest/libhapticsfix.dylib"
 /bin/cp "$guest_products/gpu/libAppleParavirtCompilerPluginIOGPUFamily.dylib" \
     "$guest/libAppleParavirtCompilerPluginIOGPUFamily.dylib"
+# The HAL plugin is a bundle, signed whole by the Makefile; copied as a tree so
+# its _CodeSignature still matches.
+/bin/cp -R "$guest_products/virtiosound/VPhoneVirtIOSound.driver" "$guest/VPhoneVirtIOSound.driver"
+
+# The commit this bundle was built from, shown in vphone-vm's app menu next to
+# CFBundleShortVersionString and CFBundleVersion. A tree with uncommitted
+# tracked changes is marked dirty. Outside a git checkout the key is removed,
+# so an incremental build never keeps a stale hash.
+info_plist="$bundle/Contents/Info.plist"
+if build_hash="$(/usr/bin/git -C "$root" rev-parse --verify --short HEAD 2>/dev/null)"; then
+    if [[ -n "$(/usr/bin/git -C "$root" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+        build_hash+="-dirty"
+    fi
+    /usr/bin/plutil -replace VPhoneBuildHash -string "$build_hash" "$info_plist"
+else
+    /usr/bin/plutil -remove VPhoneBuildHash "$info_plist" 2>/dev/null || true
+fi
 
 # Patch presets. Prewritten plists, read by vphone-cli at patch time to decide
 # which declared patches apply. Nothing generates or edits these.
@@ -87,6 +105,10 @@ fi
 "${0:a:h}/SyncStrings.sh"
 /usr/bin/xcrun xcstringstool compile \
     "$root/VPhoneExecutable/VPhoneVirtualization/Resources/Localizable.xcstrings" \
+    --output-directory "$resources"
+# The microphone prompt names this bundle, and reads its text from here.
+/usr/bin/xcrun xcstringstool compile \
+    "$root/VPhoneExecutable/VPhoneVirtualization/Resources/InfoPlist.xcstrings" \
     --output-directory "$resources"
 
 # locationd ignores a client inside a generic bundle, so vphone-vm reads the

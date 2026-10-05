@@ -21,7 +21,7 @@ notes.
 | --- | --- |
 | `vphone-launchpad-cli: command not found` | Not installed or not on PATH. [install](install.md) |
 | `canInstallBundles: false` | `helper` is missing or outdated, or Developer Tools access is not granted. The user fixes it in Launchpad's Host Setup; relaunch Launchpad afterwards |
-| "The active VPhone.bundle has not passed its checks" | `bundle verify <version>`. If it keeps failing, read `bundle list` → `preflightDetail` |
+| "Unable to Start <name>" with "did not pass host preflight", or "is not installed" | The machine's own bundle (`vm list` → `bundle`) failed its checks or is gone. `bundle verify <version>`, then read `bundle list` → `preflightDetail`; for a missing one, install it or `vm set-bundle` to another version |
 | `vphone-vm` is killed before a window opens | AMFI refused the entitled binary. `bundle verify`; a rebuilt bundle has a new cdhash and needs the allowlist again. Host SIP/AMFI settings are the owner's to change |
 | Prompt for an administrator password | Expected after the helper's five-minute authorization lapses. Tell the user; do not loop |
 | Launchpad too old for the bundle | Series mismatch. Update Launchpad; do not install a newer-series bundle |
@@ -59,7 +59,8 @@ notes.
   machine and run `cfw update-environment <name>`.
 - **`ok` but nothing changed on screen:** inputs are asynchronous; wait for the
   attached `image` or take a screenshot. A locked or asleep screen swallows
-  taps: press `power`, then `home`.
+  taps: run `guest unlock <name>`, or on an older vphoned press `power`, then
+  `home`.
 - **Taps land in the wrong place:** the socket takes pixels (1290×2796); the
   `input.*` RPCs take points. Use `ui.tree` / `ui.tap_element` instead.
 - **Port 22 refused over iproxy:** no sshd yet. Use RPC; see
@@ -84,7 +85,8 @@ migration is hung, not that the display is broken.
 
 ## Apps and the bootstrap
 
-- **"Press home to continue" lock screen:** `{"t":"key","name":"home"}`.
+- **"Press home to continue" lock screen:** `guest unlock <name>`, or
+  `{"t":"key","name":"home"}`.
 - **App crashes with `EXC_GUARD` / Mach port guard:** a known kernel-patch
   scope limit on 26.x bases; see `Documents/Guides/troubleshooting.md`.
 - **`dyld ... @loader_path/.jbroot/...` crash** after installing a package:

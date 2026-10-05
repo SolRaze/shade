@@ -47,6 +47,8 @@
 	<true/>
 	<key>com.apple.accessibility.api</key>
 	<true/>
+	<key>com.apple.accessibility.physicalinteraction.client</key>
+	<true/>
 	<key>com.apple.backboard.client</key>
 	<true/>
 	<key>com.apple.backboardd.launchapplications</key>
@@ -536,6 +538,10 @@
 	<key>com.apple.springboard.opensensitiveurl</key>
 	<true/>
 	<key>com.apple.springboard.openurlswhenlocked</key>
+	<true/>
+	<key>com.apple.timed</key>
+	<true/>
+	<key>com.apple.tzlink.allow</key>
 	<true/>
 	<key>com.apple.usernotification.notificationregistrarproxy</key>
 	<true/>

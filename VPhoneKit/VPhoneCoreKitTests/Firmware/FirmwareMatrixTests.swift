@@ -719,4 +719,31 @@ struct FirmwareMatrixCommandLineTests {
         #expect(err == "Unsupported: no downloadable IPSW matched device=iPhone17,3 version=99.9\n")
         #expect(!err.contains("\u{1B}["))
     }
+
+    @Test func `an IPSW naming several models matches each of them`() {
+        let urls = """
+        https://updates.cdn-apple.com/2026SummerFCS/cf7db64d-5866-4bf2-bfff-50a32f58bec3/iPad16,1,iPad16,2_26.6.2_23G90_Restore.ipsw
+        https://updates.cdn-apple.com/2026SummerFCS/x/iPad16,10,iPad16,11_26.6.2_23G90_Restore.ipsw
+        """
+        let wifi = VPhoneFirmwareMatrix.releases(downloadURLs: urls, device: "iPad16,1")
+        #expect(wifi.map(\.build) == ["23G90"])
+        #expect(wifi.first?.version == "26.6.2")
+        #expect(wifi.first?.url.contains("iPad16,1,iPad16,2_") == true)
+        #expect(VPhoneFirmwareMatrix.releases(downloadURLs: urls, device: "iPad16,2").count == 1)
+        // A longer model number is a different device.
+        #expect(VPhoneFirmwareMatrix.releases(downloadURLs: urls, device: "iPad16,11").count == 1)
+    }
+
+    @Test func `an IPSW named after its family matches the family's models`() {
+        let urls = """
+        https://updates.cdn-apple.com/2026FallFCS/7532c1a2-9d94-419d-ad88-bd0e3a0e2bbc/iPad_Pro_M4_27.0.1_24A446_Restore.ipsw
+        https://updates.cdn-apple.com/2026FallFCS/6074e110-d48d-40c2-b0e8-b611520941a3/iPad17,1,iPad17,2,iPad17,3,iPad17,4_27.0.1_24A446_Restore.ipsw
+        """
+        let pro = VPhoneFirmwareMatrix.releases(downloadURLs: urls, device: "iPad16,5")
+        #expect(pro.map(\.version) == ["27.0.1"])
+        #expect(pro.map(\.build) == ["24A446"])
+        #expect(pro.first?.url.hasSuffix("/iPad_Pro_M4_27.0.1_24A446_Restore.ipsw") == true)
+        #expect(VPhoneFirmwareMatrix.releases(downloadURLs: urls, device: "iPad17,1").count == 1)
+        #expect(VPhoneFirmwareMatrix.releases(downloadURLs: urls, device: "iPad16,1").isEmpty)
+    }
 }

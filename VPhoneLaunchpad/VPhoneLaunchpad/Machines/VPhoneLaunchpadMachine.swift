@@ -24,9 +24,40 @@ nonisolated struct VPhoneLaunchpadMachinePath: Hashable, Sendable {
 /// `vm info --json` print.
 nonisolated struct VPhoneLaunchpadMachine: Decodable, Hashable, Identifiable, Sendable {
     struct Network: Decodable, Hashable, Sendable {
+        struct IPv4: Decodable, Hashable, Sendable {
+            let address: String
+            let prefixLength: Int
+            let router: String?
+            let dns: [String]?
+        }
+
+        struct PortForward: Decodable, Hashable, Sendable {
+            let transport: String
+            let hostAddress: String?
+            let hostPort: Int
+            let guestPort: Int
+
+            private enum CodingKeys: String, CodingKey {
+                case transport = "protocol"
+                case hostAddress, hostPort, guestPort
+            }
+
+            /// The spelling `vm config --forward` takes.
+            var argument: String {
+                "\(transport):\(hostAddress ?? "127.0.0.1"):\(hostPort):\(guestPort)"
+            }
+        }
+
         let mode: String
         let macAddress: String
         let bridgeInterface: String?
+        /// Nil from a bundle older than fixed addresses, and when DHCP decides.
+        let ipv4: IPv4?
+        let portForwards: [PortForward]?
+        /// The guest's mDNS name without `.local`; nil when not managed.
+        let localHostName: String?
+        /// False when the guest is not given this Mac's name locally.
+        let resolvesMacName: Bool?
     }
 
     struct OSVersion: Decodable, Hashable, Sendable {
@@ -112,6 +143,11 @@ nonisolated struct VPhoneLaunchpadMachine: Decodable, Hashable, Identifiable, Se
         default: String(localized: "None")
         }
     }
+
+    /// The fixed address, or nil when DHCP decides.
+    var addressDescription: String? {
+        network.ipv4.map { "\($0.address)/\($0.prefixLength)" }
+    }
 }
 
 // MARK: - fw catalog
@@ -131,13 +167,49 @@ nonisolated struct VPhoneLaunchpadFirmwareCatalog: Decodable, Sendable {
             ios.url
         }
 
-        /// The build from an IPSW name such as `iPhone17,3_27.0_24A435_Restore.ipsw`.
+        /// The build from an IPSW name such as `iPhone17,3_27.0_24A435_Restore.ipsw`
+        /// or `iPad_Pro_M4_27.0.1_24A446_Restore.ipsw`: the field before `Restore`.
         var build: String {
             let fields = (ios.url as NSString).lastPathComponent.split(separator: "_")
-            return fields.count >= 4 ? String(fields[2]) : ""
+            return fields.count >= 4 ? String(fields[fields.count - 2]) : ""
+        }
+
+        var isBeta: Bool {
+            ios.name.localizedCaseInsensitiveContains("beta")
         }
     }
 
+    /// One guest device and its pairings, oldest first.
+    struct Device: Decodable, Hashable, Identifiable, Sendable {
+        /// The product type `fw prepare --device` takes.
+        let productType: String
+        let name: String
+        /// `iPhone` or `iPad`.
+        let family: String
+        let pairings: [Pairing]
+
+        var id: String {
+            productType
+        }
+
+        var isPad: Bool {
+            family == "iPad"
+        }
+
+        /// The newest release, or the newest build when every one is a beta.
+        var defaultPairing: Pairing? {
+            pairings.last { !$0.isBeta } ?? pairings.last
+        }
+    }
+
+    /// The iPhone the `pairings` list is for.
     let device: String
     let pairings: [Pairing]
+    /// Every guest device, from a bundle with iPad guests; nil before.
+    let devices: [Device]?
+
+    /// The guest devices, or the iPhone alone from a bundle without `devices`.
+    var guests: [Device] {
+        devices ?? [Device(productType: device, name: device, family: "iPhone", pairings: pairings)]
+    }
 }

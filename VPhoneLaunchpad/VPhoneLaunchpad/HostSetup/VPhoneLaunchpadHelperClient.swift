@@ -277,7 +277,7 @@ final class VPhoneLaunchpadHelperClient {
         }
     }
 
-    /// Runs `cfw update-environment` as root: redeploys the active bundle's
+    /// Runs `cfw update-environment` as root: redeploys the given bundle's
     /// guest resources into a stopped machine. Output lines go to `onLine`.
     func updateGuestEnvironment(
         bundleVersion: String,
@@ -305,6 +305,32 @@ final class VPhoneLaunchpadHelperClient {
             }
         } onCancel: {
             Task { @MainActor in self.cancelCustomFirmware() }
+        }
+    }
+
+    /// Runs `vm leases --release-orphans --json` as root against the machines
+    /// of `libraryRoots`, and returns the command's JSON output.
+    func releaseOrphanedLeases(bundleVersion: String, libraryRoots: [String]) async throws -> Data {
+        await refresh()
+        if case .outdated = state {
+            try await install()
+        }
+        guard case .ready = state else {
+            throw VPhoneLaunchpadError(String(localized: "Update the privileged helper in Host Setup, then try again."))
+        }
+        let authorization = try await authorizationSession.externalForm()
+        return try await request { proxy, done in
+            proxy.releaseOrphanedLeases(
+                authorization: authorization,
+                bundleVersion: bundleVersion,
+                libraryRoots: libraryRoots,
+            ) { output, message in
+                if let message {
+                    done(.failure(VPhoneLaunchpadError(message)))
+                } else {
+                    done(.success(Data((output ?? "").utf8)))
+                }
+            }
         }
     }
 

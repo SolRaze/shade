@@ -33,6 +33,11 @@ class VPhoneVirtualMachineWindowController: NSObject {
     private var basePanelSize: NSSize = .zero
     private var panelScale: CGFloat = 1
     private var menuKeyMonitor: Any?
+    private var keyStateObservers: [NSObjectProtocol] = []
+    private var frameRateTimer: Timer?
+    private var frameRateSampledAt: CFTimeInterval = 0
+    /// The guest's frame rate over the last second; nil while the display is off.
+    private var frameRate: Int?
 
     var captureView: VPhoneVirtualMachineView? {
         virtualMachineView
@@ -43,6 +48,7 @@ class VPhoneVirtualMachineWindowController: NSObject {
         screenWidth: Int,
         screenHeight: Int,
         screenScale: Double,
+        hardwareKeyboardEnabled: Bool,
         keySender: VPhoneVirtualMachineKeySender,
         control: VPhoneGuestControl,
         ecid: String?,
@@ -56,7 +62,8 @@ class VPhoneVirtualMachineWindowController: NSObject {
 
         let view = VPhoneVirtualMachineView()
         view.virtualMachine = vm
-        view.capturesSystemKeys = true
+        view.hardwareKeyboardEnabled = hardwareKeyboardEnabled
+        view.capturesSystemKeys = hardwareKeyboardEnabled
         view.keySender = keySender
         view.control = control
         view.clipboardSync = VPhoneClipboardSync(control: control)
@@ -145,6 +152,7 @@ class VPhoneVirtualMachineWindowController: NSObject {
             window.center()
         }
         window.setFrameAutosaveName(sceneName)
+        observeKeyState(of: window)
         tileAwayFromOtherGuests(window)
 
         let controller = NSWindowController(window: window)
@@ -174,13 +182,93 @@ class VPhoneVirtualMachineWindowController: NSObject {
         touchIDMonitor = monitor
 
         refreshTitle()
+        setFrameRateDisplay(VPhoneFrameRateDisplay.isEnabled)
+    }
+
+    /// Disconnect the old display and input devices before rebuilding the VM.
+    func closeForRestart() {
+        frameRateTimer?.invalidate()
+        frameRateTimer = nil
+        let center = NotificationCenter.default
+        for observer in keyStateObservers + clipboardObservers + [cornerObserver, screenObserver].compactMap({ $0 }) {
+            center.removeObserver(observer)
+        }
+        keyStateObservers.removeAll()
+        clipboardObservers.removeAll()
+        cornerObserver = nil
+        screenObserver = nil
+        if let menuKeyMonitor {
+            NSEvent.removeMonitor(menuKeyMonitor)
+            self.menuKeyMonitor = nil
+        }
+        touchIDMonitor?.stop()
+        touchIDMonitor = nil
+        captureView?.virtualMachine = nil
+        captureView?.keySender = nil
+        captureView?.control = nil
+        captureView?.clipboardSync = nil
+        windowController?.close()
+        windowController = nil
+        VPhoneHostHotKeys.shared.resume()
+    }
+
+    // MARK: - Mac Shortcuts
+
+    /// The Mac's own shortcuts on keys the guest uses are off while this window
+    /// is key; see `VPhoneHostHotKeys`.
+    private func observeKeyState(of window: NSWindow) {
+        let center = NotificationCenter.default
+        keyStateObservers.append(center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                if self?.captureView?.hardwareKeyboardEnabled == true {
+                    VPhoneHostHotKeys.shared.suspend()
+                }
+            }
+        })
+        for name in [NSWindow.didResignKeyNotification, NSWindow.willCloseNotification] {
+            keyStateObservers.append(center.addObserver(forName: name, object: window, queue: .main) { _ in
+                MainActor.assumeIsolated { VPhoneHostHotKeys.shared.resume() }
+            })
+        }
+        if window.isKeyWindow, captureView?.hardwareKeyboardEnabled == true {
+            VPhoneHostHotKeys.shared.suspend()
+        }
+    }
+
+    // MARK: - Frame Rate
+
+    /// Shows the guest's frame rate in the subtitle, sampled once a second.
+    func setFrameRateDisplay(_ enabled: Bool) {
+        frameRateTimer?.invalidate()
+        frameRateTimer = nil
+        frameRate = nil
+        if enabled, VPhoneFrameRateMeter.isAvailable {
+            _ = VPhoneFrameRateMeter.takeFrameCount()
+            frameRateSampledAt = CACurrentMediaTime()
+            frameRate = 0
+            frameRateTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                Task { @MainActor in self?.sampleFrameRate() }
+            }
+        }
+        refreshTitle()
+    }
+
+    private func sampleFrameRate() {
+        guard frameRate != nil else { return }
+        let now = CACurrentMediaTime()
+        let elapsed = now - frameRateSampledAt
+        guard elapsed > 0 else { return }
+        frameRate = Int((Double(VPhoneFrameRateMeter.takeFrameCount()) / elapsed).rounded())
+        frameRateSampledAt = now
+        refreshTitle()
     }
 
     /// Writes the guest's connection state into the titlebar.
     ///
     /// `VPhoneGuestControl` sets `isConnected` and `guestIPAddress` before it calls
     /// `onConnect`, and clears both before `onDisconnect`, so those two
-    /// callbacks are the only moments this can change.
+    /// callbacks are the only moments this can change, apart from the frame
+    /// rate sample while that display is on.
     func refreshTitle() {
         guard let window = windowController?.window, let control else { return }
         // Assigning either one dirties the titlebar and relayouts it, so only
@@ -452,12 +540,11 @@ class VPhoneVirtualMachineWindowController: NSObject {
     @objc private func chromeAppSwitcher() { keySender?.sendAppSwitcher() }
 
     private func makeSubtitle(ip: String?) -> String {
-        switch (ecid, ip) {
-        case let (ecid?, ip?): "\(ecid) — \(ip)"
-        case (let ecid?, nil): ecid
-        case (nil, let ip?): ip
-        case (nil, nil): ""
+        var parts = [ecid, ip].compactMap { $0 }
+        if let frameRate {
+            parts.append(VPhoneLocalization.format("%ld fps", frameRate))
         }
+        return parts.joined(separator: " — ")
     }
 
 }

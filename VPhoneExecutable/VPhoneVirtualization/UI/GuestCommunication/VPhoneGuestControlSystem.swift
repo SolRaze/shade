@@ -38,4 +38,23 @@ extension VPhoneGuestControl {
             throw ControlError.guestError("low_power_mode: failed to set state on guest")
         }
     }
+
+    // MARK: - Time Zone
+
+    /// Pins the guest's system time zone to an Olson name such as
+    /// `Asia/Shanghai` and turns its automatic time zone off. Returns false
+    /// when the guest was already pinned to it.
+    func setTimeZone(_ identifier: String) async throws -> Bool {
+        let result = try await call("time.timezone", params: ["identifier": identifier])
+        return result["changed"] as? Bool ?? false
+    }
+
+    // MARK: - Audio
+
+    /// Tells the guest's sound plugin what the Mac's output device adds after
+    /// its mixer, in seconds. Returns false when the guest already had it.
+    func setHostAudioLatency(_ seconds: Double) async throws -> Bool {
+        let result = try await call("audio.host_latency", params: ["seconds": seconds])
+        return result["changed"] as? Bool ?? false
+    }
 }

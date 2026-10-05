@@ -13,11 +13,15 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
     private var keychainWindowController: VPhoneKeychainWindowController?
     private var appWindowController: VPhoneAppWindowController?
     private var locationProvider: VPhoneLocationProvider?
+    private var timeZoneSync: VPhoneTimeZoneSync?
+    private var hostAudioLatencySync: VPhoneHostAudioLatencySync?
     private var hostAutomationServer: VPhoneHostAutomationServer?
     private var cameraServer: VPhoneCameraServer?
     private var apiProxy: VPhoneAPIProxy?
+    private var portForwarder: VPhonePortForwarder?
     private var sigintSource: DispatchSourceSignal?
     private var didAttemptAutoInstall = false
+    private var isRestartingVirtualMachine = false
 
     init(command: VPhoneBootCommand) {
         self.command = command
@@ -30,6 +34,10 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
         // Launch Services draws a BNDL bundle with the generic plug-in icon
         // whatever CFBundleIconFile names, so the Dock tile is set here.
         NSApp.applicationIconImage = Bundle.main.image(forResource: "AppIcon")
+
+        if !command.noGraphics {
+            VPhoneHostHotKeys.shared.recoverAfterCrash()
+        }
 
         signal(SIGINT, SIG_IGN)
         let src = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
@@ -86,6 +94,7 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
         let control = VPhoneGuestControl()
         self.control = control
         if !command.dfu {
+            startNetworkServices(vm: vm, control: control)
             let vphonedURL = URL(fileURLWithPath: command.vphonedBin)
             if FileManager.default.fileExists(atPath: vphonedURL.path) {
                 control.guestBinaryURL = vphonedURL
@@ -93,6 +102,8 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
 
             let provider = VPhoneLocationProvider(control: control)
             locationProvider = provider
+            timeZoneSync = VPhoneTimeZoneSync(control: control)
+            hostAudioLatencySync = VPhoneHostAudioLatencySync(control: control)
 
             let camServer = VPhoneCameraServer()
             cameraServer = camServer
@@ -122,6 +133,7 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
                 screenWidth: options.screenWidth,
                 screenHeight: options.screenHeight,
                 screenScale: options.screenScale,
+                hardwareKeyboardEnabled: vm.usesHardwareKeyboard,
                 keySender: keySender,
                 control: control,
                 ecid: vm.ecidHex,
@@ -132,6 +144,7 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
                     .path,
                 name: VPhoneDockName.name(forConfig: options.configURL),
             )
+            wc.captureView?.escapeIsBackGesture = !options.isPadGuest
             windowController = wc
 
             let fileWC = VPhoneFileWindowController()
@@ -149,6 +162,13 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
 
             let mc = VPhoneMenuController(keySender: keySender, control: control)
             mc.vm = vm
+            mc.onHardwareKeyboardChange = { [weak self] enabled in
+                guard let self else { return }
+                try await restartWithHardwareKeyboard(enabled)
+            }
+            mc.onFrameRateDisplayChange = { [weak wc] enabled in
+                wc?.setFrameRateDisplay(enabled)
+            }
             mc.captureView = wc.captureView
             mc.windowController = wc
             mc.touchIDMonitor = wc.touchIDMonitor
@@ -199,7 +219,7 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
             menuController = mc
 
             // Wire location toggle through onConnect/onDisconnect
-            control.onConnect = { [weak self, weak mc, weak wc, weak provider = locationProvider] caps in
+            control.onConnect = { [weak self, weak mc, weak wc, weak provider = locationProvider, weak timeZoneSync, weak hostAudioLatencySync] caps in
                 wc?.refreshTitle()
                 mc?.updateConnectAvailability(available: true)
                 mc?.updateInstallAvailability(available: caps.contains("ipa_install"))
@@ -223,11 +243,17 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
                 }
                 mc?.syncBatteryFromHost()
                 mc?.syncLowPowerModeFromHost()
+                if caps.contains("timezone") {
+                    timeZoneSync?.start()
+                }
+                if caps.contains("audio_host_latency") {
+                    hostAudioLatencySync?.start()
+                }
                 Task { @MainActor [weak self] in
                     await self?.installPackageIfRequested(caps: caps)
                 }
             }
-            control.onDisconnect = { [weak mc, weak wc, weak provider = locationProvider] in
+            control.onDisconnect = { [weak mc, weak wc, weak provider = locationProvider, weak timeZoneSync, weak hostAudioLatencySync] in
                 wc?.refreshTitle()
                 wc?.captureView?.cancelActiveTouches()
                 mc?.updateConnectAvailability(available: false)
@@ -244,22 +270,32 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
                 provider?.stopReplay()
                 provider?.stopForwarding()
                 mc?.updateLocationCapability(available: false)
+                timeZoneSync?.stop()
+                hostAudioLatencySync?.stop()
             }
         } else if !command.dfu {
             // Headless mode: auto-start location as before (no menu exists)
-            control.onConnect = { [weak self, weak provider = locationProvider] caps in
+            control.onConnect = { [weak self, weak provider = locationProvider, weak timeZoneSync, weak hostAudioLatencySync] caps in
                 if caps.contains("location") {
                     provider?.startForwarding()
                 } else {
                     print("[location] guest does not support location simulation")
                 }
+                if caps.contains("timezone") {
+                    timeZoneSync?.start()
+                }
+                if caps.contains("audio_host_latency") {
+                    hostAudioLatencySync?.start()
+                }
                 Task { @MainActor [weak self] in
                     await self?.installPackageIfRequested(caps: caps)
                 }
             }
-            control.onDisconnect = { [weak provider = locationProvider] in
+            control.onDisconnect = { [weak provider = locationProvider, weak timeZoneSync, weak hostAudioLatencySync] in
                 provider?.stopReplay()
                 provider?.stopForwarding()
+                timeZoneSync?.stop()
+                hostAudioLatencySync?.stop()
             }
         }
 
@@ -275,7 +311,50 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
             screenWidth: options.screenWidth,
             screenHeight: options.screenHeight,
         )
+        server.virtualMachine = vm
         hostAutomationServer = server
+    }
+
+    /// Hold the guest to its configured address and open its forwarded ports.
+    @MainActor
+    private func startNetworkServices(vm: VPhoneVirtualMachine, control: VPhoneGuestControl) {
+        guard let plan = vm.networkPlan else { return }
+        control.guestIPv4Setting = plan.guestIPv4
+        control.guestLocalHostName = plan.localHostName
+        control.guestStaticNames = {
+            let bridged: VPhoneIPv4Address? = if case let .bridged(interface) = plan.attachment {
+                VPhoneNetworking.ipv4Address(ofInterface: interface)
+            } else {
+                nil
+            }
+            return VPhoneNetworking.macStaticNames(
+                plan: plan,
+                macName: VPhoneNetworking.macLocalHostName(),
+                bridgedAddress: bridged,
+            )
+        }
+        guard !plan.portForwards.isEmpty else { return }
+
+        let destination: VPhonePortForwarder.Destination = if case .tunnel = plan.attachment, let network = vm.tunnelNetwork {
+            .tunnel(network)
+        } else {
+            .direct(plan.forwardingAddress)
+        }
+        let forwarder = VPhonePortForwarder(forwards: plan.portForwards, destination: destination)
+        for failure in forwarder.start() {
+            print("[network] port forward not opened: \(failure)")
+        }
+        print("[network] forwarding \(plan.portForwards.map(\.description).joined(separator: ", "))")
+        // A DHCP guest's address is learned from vphoned, and can change. A
+        // dropped connection to vphoned says nothing about the guest's address,
+        // so the last one known is kept.
+        if case .direct(nil) = destination {
+            control.onGuestIPAddressChange = { [weak forwarder] ip in
+                guard let address = ip.flatMap(VPhoneIPv4Address.init(dotted:)) else { return }
+                forwarder?.updateGuestAddress(address)
+            }
+        }
+        portForwarder = forwarder
     }
 
     @MainActor
@@ -314,13 +393,90 @@ class VPhoneVirtualMachineAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationWillTerminate(_: Notification) {
+    @MainActor
+    private func stopControlServices() {
         hostAutomationServer?.stop()
+        portForwarder?.stop()
         apiProxy?.stop()
         control?.stop()
     }
 
+    /// Virtualization copies the keyboard configuration when creating the VM.
+    /// A guest reboot leaves the USB device in place. Rebuild the VM's devices
+    /// inside the same NSApplication so the menu remains registered with macOS.
+    @MainActor
+    private func restartWithHardwareKeyboard(_ enabled: Bool) async throws {
+        guard !isRestartingVirtualMachine else { return }
+        isRestartingVirtualMachine = true
+        defer { isRestartingVirtualMachine = false }
+        try await stopForHardwareKeyboardChange(enabled)
+
+        vm?.stopHostDevices()
+        (NSApp as? VPhoneApplication)?.resetGuestKeyState()
+        stopControlServices()
+        locationProvider?.stopForwarding()
+        locationProvider?.stopReplay()
+        timeZoneSync?.stop()
+        hostAudioLatencySync?.stop()
+        cameraServer?.disconnect()
+        menuController?.stopBatteryMonitoring()
+        windowController?.closeForRestart()
+        // Tool windows belong to the old guest connection too.
+        for window in NSApp.windows {
+            window.close()
+        }
+        NSApp.mainMenu = nil
+        windowController = nil
+        menuController = nil
+        fileWindowController = nil
+        keychainWindowController = nil
+        appWindowController = nil
+        locationProvider = nil
+        timeZoneSync = nil
+        hostAudioLatencySync = nil
+        cameraServer = nil
+        hostAutomationServer = nil
+        apiProxy = nil
+        control = nil
+        vm = nil
+
+        print("[vphone] Restarting with hardware keyboard \(enabled ? "enabled" : "disabled")")
+        do {
+            try await startVirtualMachine()
+        } catch {
+            VPhoneAlert.present(
+                title: "Unable to Restart Virtual Machine",
+                message: VPhoneLocalization.format("The virtual machine stopped and the keyboard setting was saved. Launch this machine again. Unable to restart: %@", error.localizedDescription),
+                style: .warning,
+            ) { _ in NSApp.terminate(nil) }
+        }
+    }
+
+    @MainActor
+    private func stopForHardwareKeyboardChange(_ enabled: Bool) async throws {
+        guard let vm else { return }
+        let manifest = try VPhoneVirtualMachineManifest.load(from: command.config)
+        try manifest.updating(hardwareKeyboardEnabled: enabled).write(to: command.config)
+
+        // An intentional stop must not go through guestDidStop's exit handler.
+        vm.virtualMachine.delegate = nil
+        do {
+            nonisolated(unsafe) let machine = vm.virtualMachine
+            try await machine.stop()
+        } catch {
+            vm.virtualMachine.delegate = vm
+            // Preserve any other edits made while stop was in flight.
+            let current = try VPhoneVirtualMachineManifest.load(from: command.config)
+            try current.updating(hardwareKeyboardEnabled: vm.usesHardwareKeyboard).write(to: command.config)
+            throw error
+        }
+    }
+
+    func applicationWillTerminate(_: Notification) {
+        stopControlServices()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
-        !command.noGraphics
+        !command.noGraphics && !isRestartingVirtualMachine
     }
 }

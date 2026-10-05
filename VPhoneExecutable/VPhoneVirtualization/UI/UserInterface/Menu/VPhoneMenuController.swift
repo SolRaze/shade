@@ -1,4 +1,5 @@
 import AppKit
+import Dynamic
 import Foundation
 
 // MARK: - Menu Controller
@@ -9,10 +10,23 @@ class VPhoneMenuController: NSObject {
     let control: VPhoneGuestControl
     let guestToolsWindowController: VPhoneGuestToolsWindowController
     let guestPanelsWindowController: VPhoneGuestPanelsWindowController
-    weak var vm: VPhoneVirtualMachine?
+    weak var vm: VPhoneVirtualMachine? {
+        didSet {
+            hardwareKeyboardItem?.state = vm?.usesHardwareKeyboard == true ? .on : .off
+            hardwareKeyboardItem?.isEnabled = vm != nil
+            if let vm, let item = hardwareKeyboardItem {
+                let count = (Dynamic(vm.virtualMachine)._keyboards.asObject as? NSArray)?.count
+                print("[keyboard] Menu checked: \(item.state == .on), active keyboards: \(count.map(String.init) ?? "unknown")")
+            }
+        }
+    }
+
     weak var windowController: VPhoneVirtualMachineWindowController?
     /// View-menu size items, keyed by the panel scale each one applies.
     var viewSizeItems: [CGFloat: NSMenuItem] = [:]
+    var hardwareKeyboardItem: NSMenuItem?
+    var onHardwareKeyboardChange: ((Bool) async throws -> Void)?
+    var onFrameRateDisplayChange: ((Bool) -> Void)?
 
     var onFilesPressed: (() -> Void)?
     var onKeychainPressed: (() -> Void)?
@@ -27,8 +41,10 @@ class VPhoneMenuController: NSObject {
     var installBootstrapFromFileItem: NSMenuItem?
     var uninstallBootstrapItem: NSMenuItem?
     var uninstallBootstrapNoRestartItem: NSMenuItem?
+    var rebuildAppRegistrationsItem: NSMenuItem?
     var isInstallingBootstrap = false
     var isUninstallingBootstrap = false
+    var isRebuildingAppRegistrations = false
     var installPackageItem: NSMenuItem?
     var clipboardGetItem: NSMenuItem?
     var clipboardSetItem: NSMenuItem?
@@ -87,10 +103,8 @@ class VPhoneMenuController: NSObject {
         // App menu
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu(title: "shade")
-        let buildHash = Bundle.main.object(forInfoDictionaryKey: "VPhoneBuildHash") as? String
-        let buildTitle = buildHash.flatMap { $0.isEmpty ? nil : $0 } ?? VPhoneLocalization.text("unknown")
         let buildItem = NSMenuItem(
-            title: VPhoneLocalization.format("Build: %@", buildTitle),
+            title: VPhoneLocalization.format("Build: %@", Self.buildDescription()),
             action: nil,
             keyEquivalent: "",
         )
@@ -159,6 +173,23 @@ class VPhoneMenuController: NSObject {
 
         VPhoneLocalization.menu(mainMenu)
         NSApp.mainMenu = mainMenu
+    }
+
+    /// "2.3.2 (26, 735927f)": the bundle version, its build number and the
+    /// commit `StageBundle.sh` stamped into the Info.plist. vphone-vm runs from
+    /// `VPhone.bundle/Contents/MacOS`, so `Bundle.main` is that bundle.
+    static func buildDescription() -> String {
+        func value(_ key: String) -> String? {
+            (Bundle.main.object(forInfoDictionaryKey: key) as? String).flatMap { $0.isEmpty ? nil : $0 }
+        }
+        let details = [value("CFBundleVersion"), value("VPhoneBuildHash")].compactMap(\.self)
+        let detail = details.isEmpty ? nil : details.joined(separator: ", ")
+        switch (value("CFBundleShortVersionString"), detail) {
+        case let (version?, detail?): return "\(version) (\(detail))"
+        case let (version?, nil): return version
+        case let (nil, detail?): return detail
+        case (nil, nil): return VPhoneLocalization.text("unknown")
+        }
     }
 
     func makeItem(

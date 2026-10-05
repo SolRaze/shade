@@ -1,4 +1,4 @@
-# vphoned HTTP/WebSocket API
+`audio.volume {value?, category?}`, `audio.state`, `audio.host_latency {seconds?}` (`{seconds}`, plus `changed` after a set: the Mac output latency the sound plugin adds, see below; capability `audio_host_latency`) |# vphoned HTTP/WebSocket API
 
 ## Transport and ownership
 
@@ -78,8 +78,11 @@ command-line executable remains unentitled and still launches `vphone-vm`.
 
 The guest links IcliKit directly. App registration refresh is available through
 `POST /v1/apps/refresh` or the WebSocket method `apps.refresh`. An optional
-`directory` selects a bundle directory; omitted, it uses the bootstrap's
-`/Applications`. IcliKit verifies registrations by reading them back.
+`directory` selects a bundle directory; omitted, it uses `/Applications` under
+the bootstrap vphoned installed (vphoned runs from the system volume, so
+IcliKit cannot find the bootstrap itself). `system.uicache` is the same call.
+IcliKit verifies registrations by reading them back; a bundle it could not
+register or verify is named in the error message.
 `screen.screenshot` uses IcliKit's native screen capture and returns a base64
 JPEG with `mime_type`, `width`, and `height`; the current VM produces 1290×2796.
 The host's Save/Copy Screenshot menu decodes this guest image. It omits the
@@ -173,7 +176,7 @@ shows every path in a destructive confirmation alert before sending the request.
 ## HTTP and WebSocket contract
 
 JSON resource routes cover device state, apps, input, location, Developer Mode, low power
-mode, clipboard, file listing, and keychain. `GET/PUT
+mode, time zone, clipboard, file listing, and keychain. `GET/PUT
 /v1/files/content?path=<absolute-guest-path>` transfer bytes with
 `application/octet-stream`; upload writes to a temporary file in the same
 directory then renames it after all chunks have been written. JSON bodies
@@ -270,16 +273,16 @@ request carries `"force": true`.
 | Area | Methods |
 | --- | --- |
 | Device | `device.snapshot`, `device.info` (snapshot plus network, screen, rotation, brightness, volume, low power, Developer Mode, agent), `device.screen`, `device.network`, `device.ioreg {plane}`, `device.environment`, `device.basebin {archive?}` |
-| Display, audio | `display.brightness {value?}`, `display.rotation {orientation?}`, `display.orientation` (`{degrees, source}`: SpringBoard's interface orientation without a screen capture, for polling; capability `display_orientation`), `display.rotation_lock {locked}`, `audio.volume {value?, category?}`, `audio.state` |
+| Display, audio | `display.brightness {value?}`, `display.rotation {orientation?}`, `display.orientation` (`{degrees, source}`: SpringBoard's interface orientation without a screen capture, for polling; capability `display_orientation`), `display.rotation_lock {locked}`, `display.auto_lock` (`{auto_lock_seconds, never, lock_screen_minimum_seconds}`: Auto-Lock and the Lock Screen timeout vphoned keeps in step with it, see below; capability `display_auto_lock`), `screen.unlock {passcode?, timeout?}` (`{locked, screen_off, was_locked, was_screen_off}`: the display on and the Lock Screen passed, see below; capability `screen_unlock`), `audio.volume {value?, category?}`, `audio.state` |
 | Input | `input.touch`, `input.hid`, `input.button {name}`, `input.key {name}`, `input.type {text, delay_ms?}`, `input.paste {text}`, `input.tap`, `input.double_tap`, `input.long_press`, `input.swipe`, `input.drag {points}`, `input.touch_sequence {events}` — gesture coordinates are screen points |
 | UI | `ui.tree` (alias `accessibility.tree`), `ui.element_at`, `ui.tap_element`, `ui.wait`, `ui.wait_gone`, `ui.ocr {languages?, min_confidence?}`, `ui.describe`, `screen.screenshot` |
 | Processes | `processes.list {filter?}`, `processes.kill {pid, signal?}` **force**, `memory.jetsam`, `memory.pressure` (only the three kernel memory sysctls, for polling) |
 | launchd | `services.list`, `status`, `print`, `dump`, `disabled`, `start`, `enable`, `load`; `services.stop`, `disable`, `remove`, `signal`, `unload` **force**; `launchd.getenv`, `setenv`, `unsetenv` |
 | Logs | `logs.syslog {seconds, process?, level?, max_lines?}` (a bounded capture of at most 60 s), `logs.crashes {bundle_id?}`, `logs.crash {path}` |
 | Darwin notifications | `notify.post {name, state?}` (`postDarwinNotification`; `state` is a UInt64, as a number or a decimal string, stored before the post), `notify.state {name}` (`darwinNotificationState`) |
-| Network, security | `network.capture {seconds, interface?, filter?}` (writes a pcap in the guest scratch directory and returns its path), `security.ssl_killswitch` |
+| Network, security | `network.capture {seconds, interface?, filter?}` (writes a pcap in the guest scratch directory and returns its path), `network.ipv4.get {interface?}`, `network.ipv4.set {interface?, method, address?, subnet_mask?, router?, dns?}`, `network.hostname.get`, `network.hostname.set {local_host_name?}`, `network.static_names.get`, `network.static_names.set {entries}`, `network.resolve {host, family?, port?, first_only?, timeout_ms?}` (see below), `security.ssl_killswitch` |
 | Apps | `apps.list`, `search`, `refresh`, `launch`, `terminate`, `foreground`, `open_url`, `install`, `info`, `binary`, `data_dir`, `url_schemes`, `handlers`, `registration`, `register`, `network_policy {repair?}`; `apps.uninstall`, `unregister`, `unregister_dir` **force** |
-| System | `system.uicache`, `system.system_apps {visible?}`, `system.respring` **force**, `system.reboot {userspace?}` **force**, `developer_mode.status`, `developer_mode.enable`, `power.low_power_mode`, `diagnostics.self_test` |
+| System | `system.uicache`, `system.system_apps {visible?}`, `system.respring` **force**, `system.reboot {userspace?}` **force**, `developer_mode.status`, `developer_mode.enable`, `power.low_power_mode`, `time.timezone {identifier?, automatic?}` (see below), `diagnostics.self_test` |
 | Files | `files.list`, `mkdir`, `remove`, `rename`, `read {binary?, limit?}`, `write`, `find`, `copy`, `symlink`, `chmod`, `chown`, `plist`, `plist_set {value \| remove}` |
 | Preferences, clipboard, location | `settings.get/set/delete`, `clipboard.get/set/clear`, `location.set/clear/current` |
 | Keychain | `keychain.list {class?}`, `add`, `delete`, `get`, `update`, `database` |
@@ -289,6 +292,111 @@ request carries `"force": true`.
 | Profile UDID | `udid.get`, `udid.set {udid}`, `udid.clear` — each returns `{udid, path}`, the UDID the guest gives its profile checks and the host (null: the guest's own) and the settings file it came from; `set` and `clear` also return `restarted_pids`, `usb_serial` and `usb_reenumerated` (see below) |
 | Setup Assistant | `setup.status` (`{pending, running, pid, setup_done, setup_version, current_version}`), `setup.skip` **force** (sets `SetupDone`, `SetupFinishedAllSteps` and `SetupVersion` in `com.apple.purplebuddy`, restarts SpringBoard, returns the status plus `respring`); `/v1/health` carries `setup_pending` — see `Research/Guest/setup_assistant_skip.md` |
 
+`display.auto_lock` reads Settings' Auto-Lock (`maxInactivity` in profiled's
+`EffectiveUserSettings.plist`) and SpringBoard's `SBMinimumLockscreenIdleTime`.
+SpringBoard honors Auto-Lock only while unlocked; on the Lock Screen it turns
+the screen off after six seconds unless that key says otherwise. vphoned keeps
+the key at "never" while Auto-Lock is Never and removes it when Auto-Lock is
+anything else (`VPhoneDaemon/Daemon/GuestLockScreenIdle.swift`), at startup
+and whenever the settings change. SpringBoard reads the key when it starts, so
+a newly written one holds from the next boot or respring. Measurements:
+`Research/Guest/lock_screen_idle_timer.md`.
+
+`/v1/health` also carries `mobilegestalt_restart_pending`. At startup vphoned
+removes libMobileGestalt's cache,
+`/private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache/Library/Caches/com.apple.MobileGestalt.plist`,
+when it is older than the Preboot `devicetree.img4` the guest booted: its
+answers were worked out from an older tree
+(`VPhoneDaemon/Daemon/GuestMobileGestaltCache.swift`). Running processes keep
+the answers they read, so the field is true from that removal until the guest
+restarts, also across a vphoned restart in the same boot; vphoned does not
+restart the guest itself. See `Research/Guest/virtio_sound.md` §7.
+
+At startup vphoned also stores `ProductIDOverride` 8010 in
+`com.apple.audio.virtualaudio` for user mobile, on an iPad or iPhone guest
+that has the sound plugin (`VPhoneDaemon/Daemon/GuestVirtualAudioProduct.swift`).
+VirtualAudio reads the key before it derives a ProductID, and the one it
+derives on a VM never initializes. A value already stored is replaced;
+`VPhoneVirtIOSoundProductID` in `com.apple.coreaudio` names another ID, and 0
+there leaves the key alone. See `Research/Guest/virtio_sound.md` §6.
+
+`screen.unlock` reads the lock state, then turns the display on with
+`SBSUndimScreen` (no toggle, unlike a power press) and presses Home to dismiss
+the Lock Screen: a passcode-free guest goes to the Home Screen, a guest with a
+passcode gets the passcode pad, into which `passcode` is typed
+(`VPhoneDaemon/Daemon/GuestScreenUnlock.swift`). A lit, unlocked guest returns
+at once; a dark but unlocked one is only woken. A guest with a passcode needs
+`passcode`, entered once and never retried; without it the call fails before
+any key is sent. It needs no private entitlement. `timeout` is 1–60 seconds,
+10 by default. Measurements: `Research/Guest/screen_unlock.md`.
+
+`time.timezone` (capability `timezone`; REST `GET/PUT /v1/timezone`) returns
+`{identifier, automatic, seconds_from_gmt}`: the Olson name
+`/var/db/timezone/localtime` points to under `/var/db/timezone/zoneinfo`, and
+whether timed sets the zone automatically; IcliKit does the work. `{identifier}`
+pins the zone: it turns the automatic time zone off through CoreTime (`TMSetAutomaticTimeZoneEnabled`,
+which timed accepts only with the `com.apple.timed` entitlement) and asks
+tzlinkd to re-point the link through libutil's `tzlink` (`com.apple.tzlink.allow`);
+tzlinkd then posts `SignificantTimeChangeNotification`, and notifyd's
+`monitor` on the link (`/etc/notify.conf`) posts `com.apple.system.timezone`,
+so SpringBoard's clock changes at once. `{automatic: true}` hands the zone
+back to timed. Both add `changed`. `vphone-vm` sends the Mac's zone after
+every connect and whenever the Mac's zone changes (`VPhoneTimeZoneSync`), so
+the guest's clock reads the same local time as the host.
+
+`audio.host_latency` (capability `audio_host_latency`) reads or sets what the
+Mac's output device adds after its mixer, in seconds, which the guest's
+sound plugin adds to its speaker's output latency so a player in the guest
+holds its picture back by as much (`VPhoneDaemon/Daemon/GuestAPI+AudioLatency.swift`).
+Without `seconds` it returns `{seconds}`, the stored value or 0. `{seconds}`
+(0 to 1) stores it as `VPhoneVirtIOSoundHostLatency` in `com.apple.coreaudio`
+for user mobile, posts the Darwin notification
+`com.vphone.audio.host-latency` so a running audiomxd reads it again, and
+returns `{seconds, changed}`; a value within 10 µs of the stored one is
+neither written nor posted (`changed: false`). `vphone-vm` sends the default
+output device's device latency + output stream latency after every connect and whenever the default output device or one of
+those changes (`VPhoneHostAudioLatencySync`). See
+`Research/Guest/virtio_sound.md` §6, "Picture against sound".
+
+`network.ipv4.get` and `network.ipv4.set` read and write the IPv4 settings of
+one interface (default `en0`) in configd's network preferences,
+`/var/preferences/SystemConfiguration/preferences.plist`, through SCPreferences
+resolved with `dlsym` (`VPhoneDaemon/Native/vphoned_network.m`). Both return
+`{interface, service, method, managed, address?, subnet_mask?, router?, dns}`;
+`set` adds `changed`. `set` with `method: "manual"` needs `address`,
+`subnet_mask` and `router`, and takes `dns` as an array; it commits and applies
+the preferences, so the address changes at once and survives a reboot. A
+manual configuration vphoned writes is marked `VPhoneManaged` in the service's
+`IPv4` and `DNS` dictionaries. `method: "dhcp"` undoes only a marked one; an
+address the user set in the guest's own Settings is left alone and reported
+with `changed: false`. `vphone-vm` calls `set` after every connect with the
+setting its network plan derived from the VM's `config.plist`
+(`VPhoneNetworking.plan`), so the guest is held to that address.
+
+`network.hostname.get` and `network.hostname.set` read and write the guest's
+mDNS name, `System/Network/HostNames/LocalHostName` in the same preferences;
+both return `{local_host_name, managed}`, and `set` adds `changed`. `set` with a
+`local_host_name` (one DNS label) replaces the name and records the one it
+replaced; `set` with none or null puts that one back. A name vphoned did not set
+is never changed by a null. `vphone-vm` calls `set` after every connect with the
+VM's `localHostName`, or null when it has none.
+
+`network.static_names.set` replaces the names the guest resolves locally, given
+as `entries: [{address, names}]` (IPv4 only; an empty list withdraws them).
+vphoned registers each name as a LocalOnly, known-unique A record with the
+guest's own mDNSResponder (`VPhoneDaemon/Daemon/GuestStaticNames.swift`), the
+kind of record an `/etc/hosts` line becomes: an IPv4 lookup of the name returns
+that address alone, at once, without a query on the wire or cached answers. It
+saves them and registers them again when it starts; `get` lists them.
+`vphone-vm` sets this Mac's `<LocalHostName>.local` after every connect.
+
+`network.resolve` runs `getaddrinfo` in the guest (`family` `ipv4`, `ipv6` or
+any) and returns `{host, status, elapsed_ms, addresses}`, the addresses in the
+resolver's order. With `port`, each address is also connected to for up to two
+seconds and reports `connect`, `connect_ms` and the `local` address used, which
+names the interface the connection left from; `first_only` connects to the
+first address only, as a client that does not fall back would.
+
 `processes.list` joins icli's kernel process list with `proc_pid_rusage`
 footprint, resident size and CPU time (`VPhoneDaemon/Native/vphoned_process.m`),
 the jetsam priority band and limit, and the RunningBoard bundle identifier.
@@ -296,7 +404,7 @@ Account passwords, boot logo rendering and package installation, removal and
 repository changes are deliberately not exposed. `/v1/health` lists the new
 areas in `capabilities` (`device_info`, `display`, `audio`, `input_gestures`,
 `ui_inspection`, `processes`, `services`, `logs`, `network_capture`,
-`app_details`, `system_control`, `file_tools`, `packages`, `environment_update`, `udid_override`, `setup_skip`) so a host can hide
+`app_details`, `system_control`, `file_tools`, `packages`, `environment_update`, `udid_override`, `setup_skip`, `network_ipv4`, `network_hostname`, `network_static_names`, `network_resolve`, `display_auto_lock`, `screen_unlock`) so a host can hide
 panels an older agent cannot serve. icli failures reach the caller with
 icli's own error `code` (`failed`, `unavailable`, `device_locked`, …) and
 message.

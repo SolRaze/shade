@@ -8,17 +8,21 @@ tweak filter plists, and the GPU provenance note:
 | --- | --- |
 | Camera app hook | `camfix/libcamfix.dylib`, `camfix/libcamfix.plist` |
 | Camera daemon hook | `vcamcaptured/libvcamcaptured.dylib`, `vcamcaptured/libvcamcaptured.plist` |
+| Haptics fix | `hapticsfix/libhapticsfix.dylib` |
 | Launchd hook | `launchhook/launchdhook-vphone.dylib` |
 | Process injection bridge | `systemhook/SystemHook-vphone.dylib` |
 | iOS 27 app registrar | `vpregister/vpregister` |
 | PCC GPU driver | `gpu/README.md` (source and extraction flow; no Apple binary) |
+| Virtio sound HAL plugin | `virtiosound/VPhoneVirtIOSound.driver` |
 
 The archive is a local build artifact, not a VM bootstrap. `cfw install` places
 the launchd hook, SystemHook, and camera hooks in `/usr/lib`, and the
 vphoned environment update replaces changed copies in a running guest. SystemHook
 loads `libvcamcaptured.dylib` into `/usr/libexec/cameracaptured` and
 `libcamfix.dylib` into apps that have AVFoundation loaded; neither camera hook
-needs ElleKit or a bootstrap. After a bootstrap installs ElleKit, the launchd hook
+needs ElleKit or a bootstrap. It loads `libhapticsfix.dylib` into SpringBoard,
+where UIKit's feedback engine would otherwise die on the haptics hardware no
+VM has. After a bootstrap installs ElleKit, the launchd hook
 inserts SystemHook into `xpcproxy`, bootstrap executables, and apps started
 directly by launchd. Inside `xpcproxy`, SystemHook carries itself into the
 final executable through `posix_spawnp`. Injected App and bootstrap processes
@@ -36,3 +40,10 @@ Apple GPU binary is stored in this directory, the archive, or the shipped app.
 
 See `Research/Guest/virtual_camera_transport.md` for the camera transport
 validation and the hook installation prerequisites.
+
+The virtio sound plugin is the CoreAudio half of the VM's virtio-snd device,
+which iOS ships no driver for. audiomxd loads it when the kernel publishes
+`AppleVirtIOSound`, and it publishes a speaker and a microphone device.
+`make test-virtiosound` checks its format choice, its rings and how captured
+frames are served, on the host. See `Research/Guest/virtio_sound.md` and
+`Research/Guest/virtio_sound_microphone.md`.

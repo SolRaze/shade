@@ -18,6 +18,11 @@ struct VPhoneVirtualMachineCreateCommand: ParsableCommand {
     var gpuDriverBundle: String?
     @Option(help: "Directory for downloaded IPSWs, shared by every VM (default: ~/.vphone/ipsws or $VPHONE_ROOT/ipsws)")
     var ipswCache: String?
+    @Option(help: ArgumentHelp(
+        "Guest device, when the IPSW covers several models (iPad15,5 from the iPad Air IPSW)",
+        valueName: "product-type",
+    ))
+    var device: String?
     @Option(name: .shortAndLong, help: "Disk size (GB)") var diskSize: UInt64 = 64
     @Option(
         name: .customLong("preset"),
@@ -38,8 +43,12 @@ struct VPhoneVirtualMachineCreateCommand: ParsableCommand {
         // also where a missing vphone-vm should be reported — before any of the
         // long-running download and patch work, not after it.
         let launcher = try VPhoneGuestLaunchPlanner()
-        // Prompt for any firmware component not supplied on the command line.
-        let sources = try VPhoneFirmwareSourceSelection.resolve(iphone: iphoneSource, cloudos: cloudosSource)
+        if let device, VPhoneGuestDevice.named(device) == nil {
+            throw ValidationError("vphone runs \(VPhoneGuestDevice.known.map(\.productType).joined(separator: ", ")) guests, not \(device).")
+        }
+        // Prompt for any firmware component not supplied on the command line,
+        // from the guest device's builds.
+        let sources = try VPhoneFirmwareSourceSelection.resolve(iphone: iphoneSource, cloudos: cloudosSource, device: device)
         guard sources.iphoneSource != nil, sources.cloudosSource != nil else {
             throw ValidationError("Specify both --iphone-source and --cloudos-source when running without a terminal.")
         }
@@ -56,6 +65,7 @@ struct VPhoneVirtualMachineCreateCommand: ParsableCommand {
             ipswCacheDirectory: ipswCache.map {
                 URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true)
             } ?? VPhoneResources.ipswCacheDirectory(),
+            device: device,
             patchPreset: preset,
             diskSizeGB: diskSize,
             verbosity: VPhoneVerbosity(count: verboseCount),

@@ -26,6 +26,10 @@ bool vp_hid_load(void);
 /// `touchSequence` can carry two fingers at once, which is why this exists.
 void vp_hid_touch2(int phase, double x1, double y1, double x2, double y2);
 
+/// Turn the display on without pressing a button. False when
+/// SpringBoardServices has no SBSUndimScreen.
+bool vp_screen_undim(void);
+
 typedef struct {
     int32_t pid;
     int32_t ppid;
@@ -51,4 +55,23 @@ char *vp_usb_own_serial(void);
 #ifdef __OBJC__
 /// Snapshot-local nested accessibility tree, using actual private iOS child links.
 NSDictionary *vp_ax_hierarchy(int pid, int maxElements, int maxDepth, int timeoutMS);
+
+/// `interface`'s IPv4 settings in configd's network preferences: `method`
+/// (dhcp or manual), `address`, `subnet_mask`, `router`, `dns`, and `managed`
+/// when vphoned wrote them. Nil with `*error` set when there is no such service.
+NSDictionary *vp_network_ipv4_get(NSString *interface, NSString **error);
+
+/// Set `interface` to `params` (`method` dhcp, or manual with `address`,
+/// `subnet_mask`, `router` and `dns`), commit and apply. DHCP only undoes a
+/// manual setting vphoned made. Returns the result of `vp_network_ipv4_get`
+/// plus `changed`.
+NSDictionary *vp_network_ipv4_set(NSString *interface, NSDictionary *params, NSString **error);
+
+/// The guest's mDNS name (`local_host_name`, null when unset) and whether
+/// vphoned set it (`managed`).
+NSDictionary *vp_network_hostname_get(NSString **error);
+
+/// Set the mDNS name, or with nil put back the one vphoned replaced. Only a
+/// name vphoned set is ever undone. Returns the get result plus `changed`.
+NSDictionary *vp_network_hostname_set(NSString *name, NSString **error);
 #endif

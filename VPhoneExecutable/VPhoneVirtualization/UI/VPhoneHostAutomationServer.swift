@@ -27,10 +27,15 @@ import ImageIO
 ///   {"t":"swipe","x1":645,"y1":2600,"x2":645,"y2":1400,"ms":300}  → swipe
 ///   {"t":"key","name":"home"}                   → hardware key (home/power/volup/voldown)
 ///   {"t":"key","name":"cmd+v"}                  → any other name goes to vphoned `input.key`
+///   {"t":"hostkey","keys":"ctrl+space"}         → the same key events a Mac keyboard gives the VM
+///                                                 window, through `VPhoneApplication` and the virtual
+///                                                 keyboard (windowed launches only)
 ///   {"t":"type","text":"Hello"}                 → set guest clipboard
 ///   {"t":"ping"}                                → vphoned request/response
 ///   {"t":"rpc","method":"input.type","params":{"text":"ls\n"}}
 ///                                               → any vphoned method; its result is in `"result"`
+///   {"t":"network"}                             → the NIC's state, in `"result"`
+///   {"t":"network","link":"down"}               → unplug (`up` replugs); not saved
 ///
 /// All commands except "screenshot" and "rpc" wait briefly then capture a
 /// compact screen image returned as `"image":"<base64>"` in the response.
@@ -61,6 +66,8 @@ class VPhoneHostAutomationServer {
     private weak var captureView: VPhoneVirtualMachineView?
     private var screenRecorder = VPhoneScreenRecorder()
     private weak var control: VPhoneGuestControl?
+    /// For the `network` command; nil until the VM exists.
+    weak var virtualMachine: VPhoneVirtualMachine?
 
     /// Matches vphoned's JSON body limit, so an `rpc` line is never refused
     /// here that the guest would accept.
@@ -144,6 +151,8 @@ class VPhoneHostAutomationServer {
 
     func stop() {
         if listenFD >= 0 {
+            // Wake the blocked accept before a VM restart creates a new socket.
+            shutdown(listenFD, SHUT_RDWR)
             close(listenFD)
             listenFD = -1
         }
@@ -207,6 +216,15 @@ class VPhoneHostAutomationServer {
                 }
                 try await pressKey(name)
 
+            case "hostkey":
+                guard let keys = json["keys"] as? String else {
+                    return Self.reply(ok: false, error: "hostkey requires keys, such as ctrl+space, fn, esc or vk:0x66")
+                }
+                guard let view = windowedView else {
+                    return Self.reply(ok: false, error: "hostkey needs a VM window; this launch is headless")
+                }
+                try await VPhoneHostKeyEvents.press(keys, in: view)
+
             case "type":
                 guard let text = json["text"] as? String else {
                     return Self.reply(ok: false, error: "type requires text")
@@ -224,6 +242,18 @@ class VPhoneHostAutomationServer {
                 let wantRPCScreen = json["screen"] as? Bool ?? false
                 let image = wantRPCScreen ? await settledCompactScreenshot(delayMs: screenDelay) : nil
                 return Self.reply(ok: true, image: image, result: result)
+
+            case "network":
+                guard let virtualMachine else {
+                    return Self.reply(ok: false, error: "the VM is not running")
+                }
+                if let link = json["link"] as? String {
+                    guard link == "up" || link == "down" else {
+                        return Self.reply(ok: false, error: "link must be up or down")
+                    }
+                    try virtualMachine.setNetworkLink(up: link == "up")
+                }
+                return Self.reply(ok: true, result: virtualMachine.networkStatus)
 
             default:
                 return Self.reply(ok: false, error: "unknown command: \(type)")
