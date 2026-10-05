@@ -75,6 +75,9 @@ TUNE_OFF=(
   com.apple.finhealthd com.apple.fitnessintelligenced com.apple.batteryintelligenced
   com.apple.tipsd com.apple.gamed com.apple.duetexpertd
   com.apple.spotlightknowledged com.apple.spotlightknowledged.updater
+  com.apple.financed com.apple.voicebankingd com.apple.StatusKitAgent
+  com.apple.transparencyd com.apple.symptomsd-diag
+  com.apple.Maps.mapssyncd com.apple.Maps.mapspushd com.apple.maps.destinationd
 )
 case $cmd in
   up)

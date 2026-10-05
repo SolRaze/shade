@@ -36,7 +36,7 @@ automation
 `vd up` `down` `deploy` | `tap` `swipe` `key` `type` `look` | `ui` `front` `open` | `rpc` any vphoned method | `vd` alone prints usage
 `vd deploy` Release build, replaces `/Applications/shade.bundle`, links `vphone-cli` into it, reboots a running shade
 `vd up --headless` no window | `look` falls back to the shade's own screenshot, drops the agent under heavy apps like Instagram
-`vd tune` reduced motion and transparency, no background refresh, 30 daemons in `TUNE_OFF` off, locale `en_US`, host zone | rerun after a restore | `rpc services.enable` undoes one
+`vd tune` reduced motion and transparency, no background refresh, daemons in `TUNE_OFF` off, locale `en_US`, host zone | rerun after a restore | `rpc services.enable` undoes one
 `vd idle [MIN]` stops the shade after MIN min, default 30, with no `vd` call and no window focus | `~/Library/LaunchAgents/dev.sol.vd-idle.plist` runs it every 5 min
 
 host

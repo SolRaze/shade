@@ -36,9 +36,12 @@ enum GuestAPIError: Error, CustomStringConvertible {
 enum GuestAPI {
     /// Each request executes independently. A synchronous system service such
     /// as powerd may wait during boot; it must not hold up HID or file requests.
+    /// Each request drains its own autorelease pool: icli's screenshot and
+    /// screen metrics autorelease full-frame images, and vphoned has no
+    /// jetsam limit to stop the growth.
     static let queue = DispatchQueue(
         label: "vphoned.api.operations", qos: .userInitiated,
-        attributes: .concurrent,
+        attributes: .concurrent, autoreleaseFrequency: .workItem,
     )
     static let binaryHash: String = {
         guard let url = Bundle.main.executableURL,
