@@ -86,7 +86,7 @@ class VPhoneMenuController: NSObject {
 
         // App menu
         let appMenuItem = NSMenuItem()
-        let appMenu = NSMenu(title: "v-deuce")
+        let appMenu = NSMenu(title: "shade")
         let buildHash = Bundle.main.object(forInfoDictionaryKey: "VPhoneBuildHash") as? String
         let buildTitle = buildHash.flatMap { $0.isEmpty ? nil : $0 } ?? VPhoneLocalization.text("unknown")
         let buildItem = NSMenuItem(
@@ -99,7 +99,7 @@ class VPhoneMenuController: NSObject {
         appMenu.addItem(buildItem)
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(
-            withTitle: "Quit v-deuce",
+            withTitle: "Quit shade",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q",
         ).image = menuSymbol("power")

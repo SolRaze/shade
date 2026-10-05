@@ -1,16 +1,16 @@
 #!/bin/zsh
-# vd - drive a running vphone guest through its vphone.sock
+# vd - drive a running vphone shade through its vphone.sock
 #
 # Coordinates are points, the pixels of the compact screen image every action
 # returns; the socket takes device pixels, so they are multiplied by VD_SCALE.
 # Each action writes that image to VD_IMG and prints its path.
 #
 #   vd up [--headless] | down | ping
-#   vd deploy                 Release build, install to /Applications, reboot a running guest
-#   vd tune                   reapply the guest cuts: reduced motion and transparency,
+#   vd deploy                 Release build, install to /Applications, reboot a running shade
+#   vd tune                   reapply the shade cuts: reduced motion and transparency,
 #                             no background refresh, background daemons in TUNE_OFF disabled,
 #                             locale en_US and the host time zone
-#   vd idle [MIN]             stop the guest when neither vd nor its window was used for
+#   vd idle [MIN]             stop the shade when neither vd nor its window was used for
 #                             MIN minutes, default 30; run every 5 min by dev.sol.vd-idle
 #   vd tap X Y | swipe X1 Y1 X2 Y2 [MS] | key NAME | type TEXT
 #   vd shot [PATH]            full-resolution screenshot
@@ -21,14 +21,14 @@
 #   vd rpc METHOD [JSON]      any vphoned method, prints its result
 #   vd raw JSON               one socket request, prints the reply
 #
-#   VD_VM     machine name, default v-deuce
-#   VD_SCALE  guest scale, default 3
+#   VD_VM     machine name, default shade
+#   VD_SCALE  shade scale, default 3
 #   VD_IMG    compact image path, default /tmp/vd.jpg
 #   VD_DELAY  ms to let the screen settle before the image, default 250
 #   VD_NOSHOT set to skip the image after an action
 
 set -euo pipefail
-vm=${VD_VM:-v-deuce}
+vm=${VD_VM:-shade}
 stamp=/tmp/vd-$vm.used
 sock=${VPHONE_LIBRARY_ROOT:-$HOME/.vphone/machines}/$vm/vphone.sock
 scale=${VD_SCALE:-3}
@@ -60,7 +60,7 @@ cmd=${1:-}
 (( $# )) && shift
 [[ $cmd == idle ]] || touch "$stamp"
 
-# Guest daemons vd tune disables. None backs anything this guest is used for;
+# Shade daemons vd tune disables. None backs anything this shade is used for;
 # services.enable with the label brings one back.
 TUNE_OFF=(
   com.apple.SiriTTSTrainingAgent com.apple.assistant_cdmd com.apple.assistantd
@@ -98,12 +98,12 @@ case $cmd in
     [[ -x $built/Contents/MacOS/vphone-vm ]] || { print -u2 "vd: no bundle at $built"; exit 1 }
     running=$(pgrep -f "/$vm/config.plist" || true)
     [[ -n $running ]] && vphone-cli vm stop "$vm"
-    # The target builds VPhone.bundle; it installs as v-deuce.bundle, and
+    # The target builds VPhone.bundle; it installs as shade.bundle, and
     # vphone-cli on PATH is a link into it.
-    rm -rf /Applications/VPhone.bundle /Applications/v-deuce.bundle
-    ditto "$built" /Applications/v-deuce.bundle
-    ln -sf /Applications/v-deuce.bundle/Contents/MacOS/vphone-cli "$(brew --prefix)/bin/vphone-cli"
-    print "installed $built as /Applications/v-deuce.bundle"
+    rm -rf /Applications/VPhone.bundle /Applications/shade.bundle
+    ditto "$built" /Applications/shade.bundle
+    ln -sf /Applications/shade.bundle/Contents/MacOS/vphone-cli "$(brew --prefix)/bin/vphone-cli"
+    print "installed $built as /Applications/shade.bundle"
     [[ -z $running ]] || "$0" up
     ;;
   ping) send '{"t":"ping"}' >/dev/null && print ok ;;
@@ -129,8 +129,8 @@ case $cmd in
     ;;
   idle)
     pgrep -f "/$vm/config.plist" >/dev/null || exit 0
-    # A focused guest window counts as use.
-    [[ $(lsappinfo info -only bundlepath "$(lsappinfo front)") == *v-deuce.bundle* ]] && touch "$stamp"
+    # A focused shade window counts as use.
+    [[ $(lsappinfo info -only bundlepath "$(lsappinfo front)") == *shade.bundle* ]] && touch "$stamp"
     [[ -f $stamp && -z $(find "$stamp" -mmin +${1:-30}) ]] && exit 0
     print "$(date '+%F %T') idle ${1:-30} min, stopping $vm"
     vphone-cli vm stop "$vm"

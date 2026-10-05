@@ -37,4 +37,4 @@ if git diff --cached -U0 | rg '^\+' | rg -i 'claude|anthropic|codex|chatgpt|open
 fi
 git commit -q -m "upstream ${version:-sync}"
 git update-ref $ref $tip
-print "committed $(git log -1 --format='%h %s') | push with git push sol main:deuce"
+print "committed $(git log -1 --format='%h %s') | push with git push sol main:shade"
